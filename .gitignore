@@ -1,0 +1,4 @@
+# Upstream checkouts carrying this study's patches; they live in their own
+# repositories (see EXPERIMENT_README.md), not in this one.
+progent/
+gemini-cli/
