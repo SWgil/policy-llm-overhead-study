@@ -6,3 +6,5 @@ gemini-cli/
 # Per-task workspaces and telemetry written by conseca/run_task.py
 conseca/runs/
 __pycache__/
+conseca/.venv/
+conseca/mcp_results/

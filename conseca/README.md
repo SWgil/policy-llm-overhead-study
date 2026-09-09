@@ -11,6 +11,7 @@ Google `gemini-cli`에 내장된 Conseca(`security.enableConseca`)를 **켰을 �
 | `settings.template.json` | 태스크 워크스페이스에 들어가는 `.gemini/settings.json` 템플릿 |
 | `GEMINI.md` | AgentDojo 시스템 프롬프트. 워크스페이스에 복사되어 gemini-cli 컨텍스트로 들어감 |
 | `results/*.telemetry.json` | 검증 실행 1건의 텔레메트리 요약 |
+| `agentdojo-mcp/` | AgentDojo를 MCP로 노출하는 브리지(Progent에서 가져옴, 별도 클론 불필요) |
 
 ---
 
@@ -44,18 +45,16 @@ gemini            # 한 번 대화형으로 열어 인증(구글 계정 로그�
 
 인증 종류가 곧 쿼터다([§5-③](#-쿼터가-실험-규모를-정한다)). 확인은 텔레메트리의 `auth_type` 필드.
 
-### AgentDojo MCP 브리지 (Progent 저장소)
+### AgentDojo MCP 브리지
 
-이 저장소 옆에 `progent/`로 받는다(`.gitignore`에 이미 그렇게 잡혀 있다).
+`agentdojo-mcp/`에 들어 있다(Progent 저장소의 브리지를 가져온 것, 출처와 구성은 [agentdojo-mcp/README.md](agentdojo-mcp/README.md)). AgentDojo v1.1.2 스위트와 `fastmcp~=2.13`, `fastapi`가 함께 설치된다.
 
 ```bash
-git clone https://github.com/SWgil/progent-policy-overhead.git progent
-uv venv --python 3.12 .venv-conseca
-uv pip install --python .venv-conseca/bin/python ./progent/agentdojo-mcp requests
-# Windows: .venv-conseca/Scripts/python.exe
+cd conseca
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python ./agentdojo-mcp requests
+# Windows: .venv/Scripts/python.exe
 ```
-
-`agentdojo-mcp`는 AgentDojo v1.1.2 스위트와 `fastmcp~=2.13`, `fastapi`를 함께 설치한다.
 
 ---
 
@@ -64,15 +63,15 @@ uv pip install --python .venv-conseca/bin/python ./progent/agentdojo-mcp request
 터미널 1 — 브리지:
 
 ```bash
-cd progent/agentdojo-mcp
-../../.venv-conseca/bin/python mcp_server.py --api-port 9000 --mcp-port 9001 --results-dir ../../conseca/mcp_results
+cd conseca/agentdojo-mcp
+../.venv/bin/python mcp_server.py --api-port 9000 --mcp-port 9001 --results-dir ../mcp_results
 ```
 
 터미널 2 — 검증 실행(태스크 1개, Conseca on):
 
 ```bash
 cd conseca
-../.venv-conseca/bin/python run_task.py --arm on --suite banking \
+.venv/bin/python run_task.py --arm on --suite banking \
   --user-tasks user_task_0 --injection-tasks injection_task_0
 ```
 
@@ -87,7 +86,7 @@ cd conseca
 
 ```bash
 for arm in off on; do
-  ../.venv-conseca/bin/python run_task.py --arm $arm --suite banking \
+  .venv/bin/python run_task.py --arm $arm --suite banking \
     --user-tasks user_task_0 user_task_1 user_task_2 user_task_3 \
     --injection-tasks none injection_task_0 injection_task_1 injection_task_2 \
     --pause 60
