@@ -1,0 +1,11 @@
+{
+  "model": { "name": "__MODEL__" },
+  "security": { "enableConseca": __CONSECA__ },
+  "mcpServers": {
+    "agentdojo": {
+      "httpUrl": "__MCP_URL__",
+      "headers": { "task_id": "$AGENTDOJO_TASK_ID" },
+      "trust": true
+    }
+  }
+}

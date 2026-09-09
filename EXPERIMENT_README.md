@@ -239,6 +239,8 @@ unset USER_TASKS INJECTION_TASKS          # 스위트 전체
 
 논문 구현체가 아니라 Google이 실제로 출하한 구현체를 측정한다. Gemini 백엔드가 필요하다.
 
+> **AgentDojo로 on/off 오버헤드를 재는 하네스는 [conseca/README.md](conseca/README.md)에 있다.** stock gemini-cli 0.59.0을 headless로 호출하고 AgentDojo 툴을 MCP 브리지로 꽂는 방식이며, 소스 패치 없이 텔레메트리만으로 계측한다. 아래는 정책·강제 모델을 바꾸기 위한 패치 버전 안내다.
+
 `~/.gemini/settings.json`:
 
 ```json

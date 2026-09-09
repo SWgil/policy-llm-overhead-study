@@ -2,3 +2,7 @@
 # repositories (see EXPERIMENT_README.md), not in this one.
 progent/
 gemini-cli/
+
+# Per-task workspaces and telemetry written by conseca/run_task.py
+conseca/runs/
+__pycache__/
