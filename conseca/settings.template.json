@@ -2,6 +2,15 @@
   "model": { "name": "__MODEL__" },
   "security": { "enableConseca": __CONSECA__ },
   "general": { "topicUpdateNarration": false },
+  "context": { "includeDirectoryTree": false },
+  "modelConfigs": {
+    "overrides": [
+      {
+        "match": { "overrideScope": "core" },
+        "modelConfig": { "generateContentConfig": { "temperature": 0, "topP": 1 } }
+      }
+    ]
+  },
   "tools": {
     "exclude": [
       "ReadFileTool", "list_directory", "glob", "grep_search", "read_many_files",

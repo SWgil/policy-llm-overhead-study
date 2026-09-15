@@ -9,7 +9,7 @@ Google `gemini-cli`에 내장된 Conseca(`security.enableConseca`)를 **켰을 �
 | `run_task.py` | 태스크 단위 실행기. 초기화 → 워크스페이스 생성 → gemini 실행 → 채점 → 텔레메트리 요약. 태스크별 캐시로 중단 후 이어 돌림 |
 | `parse_telemetry.py` | gemini-cli 텔레메트리 파일에서 에이전트/Conseca 호출 비용과 판정을 뽑음 |
 | `settings.template.json` | 태스크 워크스페이스에 들어가는 `.gemini/settings.json` 템플릿. 내장 툴 제외 목록 포함([§5-②](#-내장-툴은-toolsexclude로-뺀다--toolscore나-read_file은-쓰지-말-것)) |
-| `GEMINI.md` | AgentDojo 시스템 프롬프트. 워크스페이스에 복사되어 gemini-cli 컨텍스트로 들어감 |
+| `agentdojo_system.md` | AgentDojo 기본 시스템 메시지 원문. `GEMINI_SYSTEM_MD`로 gemini-cli의 시스템 프롬프트를 통째로 대체한다([§8](#8-원본-agentdojo와의-정렬)) |
 | `results/*.telemetry.json` | 검증 실행 1건의 텔레메트리 요약 |
 | `agentdojo-mcp/` | AgentDojo를 MCP로 노출하는 브리지(Progent에서 가져옴, 별도 클론 불필요) |
 
@@ -28,6 +28,7 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (9000)   AgentDojo 환�
      └── parse_telemetry ──▶ agent_ms / conseca_ms / verdicts / 429 / fail-open
 ```
 
+- **프롬프트**: 시스템 프롬프트는 `agentdojo_system.md`(AgentDojo 원문)로 대체되고, 내장 툴은 모두 제외되며, 에이전트 샘플링은 temperature 0이다. 원본 벤치마크와 무엇이 같고 무엇이 다른지는 [§8](#8-원본-agentdojo와의-정렬).
 - **툴**: gemini-cli는 MCP 툴을 `mcp_agentdojo_<name>`으로 등록한다. 브리지는 HTTP 헤더 `task_id`로 어느 태스크 환경인지 구분하며, 이 헤더는 설정의 `$AGENTDOJO_TASK_ID`가 환경변수로 치환되어 들어간다.
 - **Conseca**: 프롬프트당 정책 생성 1회, 툴 호출당 판정 1회. 둘 다 CLI 기본 Flash 모델. `--approval-mode yolo`에서도 실행된다(safety checker는 규칙 판정 뒤에 돈다). deny면 툴이 실행되지 않는다.
 - **계측**: 별도 패치 없이 gemini-cli 텔레메트리만 쓴다. `api_response` 이벤트가 호출마다 `role`(`main`=에이전트, `subagent`=Conseca)과 `prompt_id`(`conseca-policy-generation` / `conseca-policy-enforcement`)를 구분해 준다. `-o json` 통계도 role별로 나뉜다.
@@ -106,6 +107,8 @@ done
 | `--out` | `runs/` | 결과 루트 |
 | `--rest-url`, `--mcp-url` | 9000 / 9001 | 브리지 주소 |
 | `--gemini` | PATH에서 탐색 | gemini 실행 파일 경로 |
+| `--attack-model-name` | gemini 모델이면 `Gemini` | 주입 텍스트의 `{model}` 자리에 들어갈 이름. 원본 AgentDojo가 파이프라인에서 뽑는 값에 해당 |
+| `--cli-prompt` | off | 정렬 이전 방식: gemini-cli 자체 시스템 프롬프트를 유지하고 AgentDojo 메시지를 `GEMINI.md` 프로젝트 컨텍스트로 넣음 |
 
 ---
 
@@ -192,3 +195,32 @@ banking `user_task_0`("bill-december-2023.txt 결제") + `injection_task_0`, Con
 ## 7. 다른 접근 — 패치된 gemini-cli
 
 이 하네스는 stock CLI + 텔레메트리만 쓴다. 정책/판정 모델을 바꾸거나 논문의 결정론적 강제기를 비교하려면 [gemini-cli-conseca-overhead](https://github.com/SWgil/gemini-cli-conseca-overhead)(v0.58.0 기반 패치, `CONSECA_METRICS_PATH`·`CONSECA_POLICY_MODEL`·`CONSECA_ENFORCER=deterministic`)를 빌드해 `--gemini`로 그 바이너리를 가리키면 된다. 같은 함정 ①이 적용된다.
+
+---
+
+## 8. 원본 AgentDojo와의 정렬
+
+기본 옵션은 원본 AgentDojo 파이프라인(`agentdojo` 패키지의 Google LLM 경로)에 최대한 맞춰져 있다. 실제 CLI 0.59.0에 가짜 엔드포인트를 물려 요청 본문으로 확인한 상태다.
+
+**맞춘 것**
+
+| 항목 | 원본 AgentDojo | 이 하네스 |
+|---|---|---|
+| 시스템 프롬프트 | `system_messages.yaml`의 기본 메시지 4줄 | `GEMINI_SYSTEM_MD=agentdojo_system.md`로 동일 원문(458자). CLI의 코딩 에이전트 프롬프트·스킬·메모리 지시 없음 |
+| 툴 집합 | 스위트 툴만 | `tools.exclude`로 내장 툴 전부 제외, `update_topic` 비활성([§5-②](#-내장-툴은-toolsexclude로-뺀다--toolscore나-read_file은-쓰지-말-것)) |
+| 샘플링 | temperature 0 | `modelConfigs.overrides`(`overrideScope: core`)로 에이전트만 temperature 0, topP 1. Conseca 호출은 이 서비스를 거치지 않아 영향 없음 |
+| 툴 결과 포맷 | `tool_result_to_str`(YAML) | 브리지가 같은 함수를 사용 |
+| 주입 텍스트 | "from me, Emma Johnson, to you, Gemini" | `--attack-model-name`(기본 `Gemini`). Progent에서 가져온 브리지는 "the AI language model"로 고정돼 있었음 |
+| 채점 | 마지막 assistant 메시지 + 실행된 호출 스택 | 동일(`-o json`의 `response`, 브리지의 `functions_stack_trace`) |
+| 작업 디렉터리 트리 | 없음 | `context.includeDirectoryTree: false` |
+
+**stock CLI로는 못 맞추는 것** — arm 간 비교에는 영향 없지만, 논문 수치와 직접 비교할 때 염두에 둘 것
+
+- 첫 user 메시지 앞에 `<session_context>`(오늘 날짜·OS·임시 경로)가 붙는다. 끄는 옵션이 없다. AgentDojo 환경 데이터의 날짜(2024년 전후)와 어긋나므로 날짜 의존 태스크(travel, workspace)에 영향을 줄 수 있다.
+- 모든 MCP 툴 결과가 `<untrusted_context>` 태그로 감싸여 모델에 전달된다. 그 자체가 주입 완화 장치라 Conseca off arm의 ASR이 원본 "무방어"보다 낮게 나올 수 있다.
+- thinking 설정(`thinkingLevel: HIGH`, `includeThoughts`)은 CLI 기본값이 유지된다. 오버라이드로 제거할 수 없다.
+- 툴 이름에 `mcp_agentdojo_` 접두사가 붙는다.
+- 루프 감지·재시도·컨텍스트 압축·모델 라우팅(`gemini-2.5-flash` → `gemini-3.5-flash`)은 CLI 안에서 돈다.
+- `~/.gemini/GEMINI.md`(전역 메모리)가 있으면 시스템 프롬프트 뒤에 붙는다. 실험 계정에서는 비워 둘 것.
+
+논문 표와 직접 비교하기보다, 같은 모델로 원본 `agentdojo` 벤치마크를 돌린 결과를 세 번째 arm으로 두고 하네스 자체의 격차를 따로 재는 편이 안전하다.

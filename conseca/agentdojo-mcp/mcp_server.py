@@ -8,6 +8,7 @@ import os
 import re
 
 from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
+from agentdojo.agent_pipeline.tool_execution import tool_result_to_str
 from agentdojo.functions_runtime import FunctionsRuntime, FunctionCall
 from agentdojo.task_suite.load_suites import get_suite
 from agentdojo.task_suite.task_suite import TaskSuite
@@ -35,6 +36,9 @@ class InitTaskRequest(BaseModel):
     suite_name: str
     user_task_id: str
     injection_task_id: Optional[str] = None
+    # Substituted for {model} in the injection text. Upstream AgentDojo derives
+    # it from the pipeline (e.g. "Gemini"); the default keeps the generic name.
+    attack_model_name: Optional[str] = None
 
 
 class FinishTaskRequest(BaseModel):
@@ -55,6 +59,8 @@ def init_task_endpoint(request: InitTaskRequest):
         injection_task = task_suite.get_injection_task_by_id(
             request.injection_task_id)
         attack = ImportantInstructionsAttack(task_suite, BasePipelineElement)
+        if request.attack_model_name:
+            attack.model_name = request.attack_model_name
         task_injections = attack.attack(user_task, injection_task)
     environment = task_suite.load_and_inject_default_environment(
         task_injections)
@@ -233,11 +239,12 @@ class ToolCallMiddleware(Middleware):
                         message=error
                     ))
                 else:
-                    # Convert result to string representation. structured_content
-                    # is set explicitly: gemini-cli re-parses a bare text block as
-                    # JSON and rejects the call when that yields a non-object (a
-                    # numeric result such as get_balance -> 1810.0).
-                    result_str = str(result) if result is not None else ""
+                    # Format the result exactly as AgentDojo's own pipeline does
+                    # (YAML dump of pydantic models / lists, str otherwise).
+                    # structured_content is set explicitly: gemini-cli re-parses a
+                    # bare text block as JSON and rejects the call when that yields
+                    # a non-object (a numeric result such as get_balance -> 1810.0).
+                    result_str = tool_result_to_str(result) if result is not None else ""
                     return ToolResult(content=result_str, structured_content={"result": result_str})
             except McpError as e:
                 raise e

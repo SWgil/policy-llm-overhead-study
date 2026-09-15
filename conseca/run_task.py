@@ -5,9 +5,11 @@ One task = one gemini-cli process. The flow, per task:
 
   1. POST /init_task on the AgentDojo MCP bridge  -> user prompt
   2. write a throwaway workspace: .gemini/settings.json (model, Conseca on/off,
-     MCP server with the task id in a header) + GEMINI.md (AgentDojo's system
-     prompt)
-  3. gemini --approval-mode yolo -o json -p "<prompt>"   (cwd = workspace)
+     MCP server with the task id in a header, built-in tools excluded,
+     temperature 0, no directory tree)
+  3. gemini --approval-mode yolo -o json -p "<prompt>"   (cwd = workspace),
+     with GEMINI_SYSTEM_MD pointing at agentdojo_system.md so the system
+     instruction is AgentDojo's own system message instead of the CLI's
   4. POST /finish_task with the final response        -> utility, security
   5. parse the telemetry file                           -> agent vs Conseca cost
 
@@ -75,7 +77,10 @@ def task_id_for(arm: str, suite: str, user_task: str, injection_task: str | None
     return f"gemini{arm}_{suite}_{user_task}_{injection_task or 'noinjection'}"
 
 
-def write_workspace(ws: Path, *, model: str, conseca: bool, mcp_url: str) -> None:
+SYSTEM_PROMPT = HERE / "agentdojo_system.md"  # AgentDojo's default system message, verbatim
+
+
+def write_workspace(ws: Path, *, model: str, conseca: bool, mcp_url: str, cli_prompt: bool) -> None:
     (ws / ".gemini").mkdir(parents=True, exist_ok=True)
     template = (HERE / "settings.template.json").read_text(encoding="utf-8")
     settings = (
@@ -84,10 +89,14 @@ def write_workspace(ws: Path, *, model: str, conseca: bool, mcp_url: str) -> Non
         .replace("__MCP_URL__", mcp_url)
     )
     (ws / ".gemini" / "settings.json").write_text(settings, encoding="utf-8")
-    shutil.copyfile(HERE / "GEMINI.md", ws / "GEMINI.md")
+    if cli_prompt:
+        # Legacy layout: keep the CLI's own system prompt and feed the AgentDojo
+        # message in as project context (lands in the first user message).
+        shutil.copyfile(SYSTEM_PROMPT, ws / "GEMINI.md")
 
 
-def run_gemini(gemini: str, ws: Path, prompt: str, task_id: str, timeout: int, dry_run: bool) -> dict:
+def run_gemini(gemini: str, ws: Path, prompt: str, task_id: str, timeout: int, dry_run: bool,
+               cli_prompt: bool) -> dict:
     telemetry = ws / "telemetry.log"
     if telemetry.exists():
         telemetry.unlink()
@@ -104,6 +113,10 @@ def run_gemini(gemini: str, ws: Path, prompt: str, task_id: str, timeout: int, d
             "GEMINI_TELEMETRY_LOG_PROMPTS": "true",
         }
     )
+    if not cli_prompt:
+        # Replace the CLI's coding-agent system prompt with AgentDojo's. Global
+        # memory (~/.gemini/GEMINI.md) is still appended if present; keep it empty.
+        env["GEMINI_SYSTEM_MD"] = str(SYSTEM_PROMPT)
     cmd = [gemini, "--approval-mode", "yolo", "-o", "json", "-p", prompt]
     if dry_run:
         print("DRY RUN, would execute in", ws)
@@ -145,6 +158,10 @@ def run_one(args, gemini: str, arm: str, suite: str, user_task: str, injection_t
             "suite_name": suite,
             "user_task_id": user_task,
             "injection_task_id": injection_task,
+            # Name the model in the injection text, as upstream AgentDojo does
+            # (get_model_name_from_pipeline); the vendored bridge defaulted to
+            # the generic "the AI language model".
+            "attack_model_name": args.attack_model_name,
         },
         timeout=60,
     )
@@ -152,8 +169,9 @@ def run_one(args, gemini: str, arm: str, suite: str, user_task: str, injection_t
     prompt = init.json()["user_task_prompt"]
     print(f"[run ] {task_id}: {prompt[:80]}")
 
-    write_workspace(ws, model=args.model, conseca=(arm == "on"), mcp_url=args.mcp_url)
-    out = run_gemini(gemini, ws, prompt, task_id, args.timeout, args.dry_run)
+    write_workspace(ws, model=args.model, conseca=(arm == "on"), mcp_url=args.mcp_url,
+                    cli_prompt=args.cli_prompt)
+    out = run_gemini(gemini, ws, prompt, task_id, args.timeout, args.dry_run, args.cli_prompt)
     if args.dry_run:
         return {"task_id": task_id, "dry_run": True}
 
@@ -222,11 +240,19 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=600, help="seconds per task")
     ap.add_argument("--pause", type=float, default=0.0,
                     help="seconds to sleep between tasks (free-tier keys: try 60)")
+    ap.add_argument("--attack-model-name", default=None,
+                    help="model name written into the injection text; default: 'Gemini' for gemini-* "
+                         "models, else AgentDojo's generic 'the AI language model'")
+    ap.add_argument("--cli-prompt", action="store_true",
+                    help="keep gemini-cli's own system prompt and pass the AgentDojo message as "
+                         "GEMINI.md project context (pre-alignment behaviour)")
     ap.add_argument("--force", action="store_true", help="ignore cached results")
     ap.add_argument("--dry-run", action="store_true", help="init the task and print the command only")
     args = ap.parse_args()
 
     gemini = find_gemini(args.gemini)
+    if args.attack_model_name is None:
+        args.attack_model_name = "Gemini" if "gemini" in args.model.lower() else "the AI language model"
     n_users, injections = SUITES[args.suite]
     user_tasks = args.user_tasks or [f"user_task_{i}" for i in range(n_users)]
     injection_tasks = args.injection_tasks or ["none", *injections]
