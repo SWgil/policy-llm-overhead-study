@@ -8,7 +8,7 @@ Google `gemini-cli`에 내장된 Conseca(`security.enableConseca`)를 **켰을 �
 |---|---|
 | `run_task.py` | 태스크 단위 실행기. 초기화 → 워크스페이스 생성 → gemini 실행 → 채점 → 텔레메트리 요약. 태스크별 캐시로 중단 후 이어 돌림 |
 | `parse_telemetry.py` | gemini-cli 텔레메트리 파일에서 에이전트/Conseca 호출 비용과 판정을 뽑음 |
-| `settings.template.json` | 태스크 워크스페이스에 들어가는 `.gemini/settings.json` 템플릿 |
+| `settings.template.json` | 태스크 워크스페이스에 들어가는 `.gemini/settings.json` 템플릿. 내장 툴 제외 목록 포함([§5-②](#-내장-툴은-toolsexclude로-뺀다--toolscore나-read_file은-쓰지-말-것)) |
 | `GEMINI.md` | AgentDojo 시스템 프롬프트. 워크스페이스에 복사되어 gemini-cli 컨텍스트로 들어감 |
 | `results/*.telemetry.json` | 검증 실행 1건의 텔레메트리 요약 |
 | `agentdojo-mcp/` | AgentDojo를 MCP로 노출하는 브리지(Progent에서 가져옴, 별도 클론 불필요) |
@@ -136,11 +136,16 @@ arm 간 비교는 (utility, ASR, 런당 벽시계, `agent_ms`, `conseca_ms`, 토
 
 하네스는 `GEMINI_CLI_TRUST_WORKSPACE=true`를 환경변수로 넣어 해결한다. 직접 돌릴 때도 반드시 줄 것.
 
-### ② `tools.core: []`는 MCP 툴까지 지운다
+### ② 내장 툴은 `tools.exclude`로 뺀다 — `tools.core`나 `read_file`은 쓰지 말 것
 
-내장 툴을 없애려고 `tools.core`를 빈 배열로 주면 **함수 선언 전체가 비고**, 모델은 `MALFORMED_FUNCTION_CALL`로 4회 재시도 후 빈 응답을 낸다. 현재 템플릿은 내장 툴을 그대로 둔다. 그 결과 검증 실행에서 모델이 `glob`·`list_directory`·내장 `read_file`로 실제 파일시스템을 뒤지느라 턴을 썼고(판정 deny 2건이 모두 여기서 났다), 정책 생성 입력도 내장 툴 스키마만큼 커졌다(10,572토큰).
+검증 실행(§6)은 내장 툴을 그대로 둔 채 돌았다. 그 결과 모델이 `glob`·`list_directory`·내장 `read_file`로 실제 파일시스템을 뒤지느라 턴을 썼고(판정 deny 2건이 모두 여기서 났다), 정책 생성 입력도 내장 툴 스키마만큼 커졌다(10,572토큰). 현재 템플릿은 내장 툴을 전부 빼고 `update_topic`도 끈 상태다. gemini-cli 0.59.0 소스와 실행으로 확인한 내용:
 
-**본 실험 전에 `tools.exclude`로 내장 툴을 빼는 설정을 1회 검증해야 한다.** MCP 툴은 `mcp_agentdojo_*` 이름이라 내장 이름과 충돌하지 않는다. 미검증.
+- `tools.exclude`에 든 툴은 모델 함수 선언, 시스템 프롬프트의 툴 목록, Conseca 정책 생성 입력에서 모두 빠진다(정책 생성기가 같은 `getFunctionDeclarations()`를 쓴다). 실측: 선언 27개(내장 16 + MCP 11) → MCP 11개, 시스템 프롬프트 30.4k → 25.2k자.
+- `general.topicUpdateNarration: false`가 `update_topic` 툴과 "첫 턴에 update_topic을 호출하라"는 프롬프트 섹션을 같이 없앤다. 툴만 빼면 프롬프트가 없는 툴을 부르라고 남는다.
+- **`tools.core: []`는 쓰지 말 것.** `tools.core`가 있으면 정책 엔진이 "목록 밖 전부 deny" 규칙을 추가하고(`policy/config.js`, `Settings (Core Tools Allowlist Enforcement)`), deny된 툴은 선언에서 정적으로 제외되므로 MCP 툴까지 사라진다. 실측: 선언 0개.
+- **내장 `read_file`은 `"read_file"`이 아니라 클래스명 `"ReadFileTool"`로 뺀다.** exclude 매칭이 MCP 툴의 접두사 뗀 이름도 비교해서, `"read_file"`을 주면 banking이 쓰는 `mcp_agentdojo_read_file`까지 같이 빠진다(실측: MCP 10개로 줄어듦). AgentDojo 74개 툴 중 내장 이름과 겹치는 것은 `read_file` 하나다.
+
+이 검증은 실제 CLI 0.59.0에 가짜 Gemini 엔드포인트(`GOOGLE_GEMINI_BASE_URL`)를 물려 요청 본문의 함수 선언을 읽는 방식으로 했다. 모델 품질과 무관하게 설정 효과만 본 것이므로, 실제 모델로 태스크 1개를 돌려 정책 키에 `mcp_agentdojo_*`만 남는지 한 번 더 확인할 것.
 
 ### ③ 쿼터가 실험 규모를 정한다
 
@@ -158,6 +163,10 @@ Conseca도 같은 Flash 버킷을 쓰므로 on arm은 요청이 두 배다. 무�
 ### ④ 모델명 별칭
 
 이 API 키에서 `gemini-2.5-flash`는 서버가 **`gemini-3.5-flash`로 바꿔 실행**하고(텔레메트리 `model` 필드에 실제 모델이 찍힌다), `gemini-2.5-pro`는 404다. Conseca 내부 기본값 `DEFAULT_GEMINI_FLASH_MODEL`도 `gemini-2.5-flash`라 같은 별칭을 탄다. 보고할 때는 텔레메트리의 실제 모델명을 쓸 것.
+
+### ⑤ 브리지의 숫자 결과는 gemini-cli가 툴 오류로 바꾼다
+
+gemini-cli는 MCP 결과에 `structuredContent`가 없으면 첫 텍스트 블록을 JSON으로 파싱해 채워 넣는다(`mcp-compliance-transport.js`). `get_balance`처럼 결과가 `1810.0`이면 숫자가 되어 스키마 검증(객체 필수)에 걸리고, 모델은 결과 대신 `invalid_type` 오류를 받는다. 문자열·리스트 결과는 JSON이 아니라 무사하다. 브리지가 `structured_content={"result": ...}`를 명시하도록 고쳐 두었고(`agentdojo-mcp/mcp_server.py`), 고친 뒤 같은 호출이 `success`로 집계되는 것을 확인했다. 이 수정 전에 돌린 §6 실측에서는 `get_balance` 결과가 오류였을 수 있다.
 
 ---
 

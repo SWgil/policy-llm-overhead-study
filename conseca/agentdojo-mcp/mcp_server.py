@@ -233,9 +233,12 @@ class ToolCallMiddleware(Middleware):
                         message=error
                     ))
                 else:
-                    # Convert result to string representation
+                    # Convert result to string representation. structured_content
+                    # is set explicitly: gemini-cli re-parses a bare text block as
+                    # JSON and rejects the call when that yields a non-object (a
+                    # numeric result such as get_balance -> 1810.0).
                     result_str = str(result) if result is not None else ""
-                    return ToolResult(content=result_str)
+                    return ToolResult(content=result_str, structured_content={"result": result_str})
             except McpError as e:
                 raise e
             except Exception as e:

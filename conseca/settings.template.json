@@ -1,6 +1,20 @@
 {
   "model": { "name": "__MODEL__" },
   "security": { "enableConseca": __CONSECA__ },
+  "general": { "topicUpdateNarration": false },
+  "tools": {
+    "exclude": [
+      "ReadFileTool", "list_directory", "glob", "grep_search", "read_many_files",
+      "replace", "write_file", "run_shell_command",
+      "list_background_processes", "read_background_output",
+      "web_fetch", "google_web_search",
+      "activate_skill", "ask_user", "write_todos", "invoke_agent",
+      "enter_plan_mode", "exit_plan_mode",
+      "read_mcp_resource", "list_mcp_resources",
+      "tracker_create_task", "tracker_update_task", "tracker_get_task",
+      "tracker_list_tasks", "tracker_add_dependency", "tracker_visualize"
+    ]
+  },
   "mcpServers": {
     "agentdojo": {
       "httpUrl": "__MCP_URL__",
