@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 """Aggregate runs/<arm>/<task_id>/result.json into an on-vs-off comparison.
 
-Prints two tables (standard library only, no model calls):
+Prints three tables (standard library only, no model calls):
 
-  per arm    runs, utility, ASR, mean wall / agent / Conseca time, tokens,
-             runs with 429 retries, Conseca fail-opens, run errors
+  headline   per arm: utility on no-injection runs, utility under attack and
+             ASR on injection runs, each with its run count (AgentDojo's
+             reporting split)
+  per arm    one row per arm x kind (benign = no injection, attack = with
+             injection, all): runs, utility, ASR, mean wall / agent / Conseca
+             time, calls, tokens, runs with 429 retries, Conseca fail-opens
   paired     every task present in both arms side by side, so the overhead
-             is read on the same task rather than across different task mixes
+             is read on the same task rather than across different task mixes;
+             the injection column separates benign rows from attack rows
 
 Usage:
     python compare_arms.py                       # runs/ -> stdout (markdown)
     python compare_arms.py --suite banking
+    python compare_arms.py --kind attack         # per-arm and paired tables: injection runs only
     python compare_arms.py --csv arms.csv --paired-csv paired.csv
     python compare_arms.py --exclude-429         # drop rate-limited runs from timing means
 
@@ -64,36 +70,67 @@ def fmt(x, nd=1):
     return str(x)
 
 
-def per_arm(runs: list[dict], exclude_429: bool) -> list[dict]:
+KINDS = ("benign", "attack", "all")
+
+
+def of_kind(runs: list[dict], kind: str) -> list[dict]:
+    if kind == "benign":
+        return [r for r in runs if not r.get("injection_task")]
+    if kind == "attack":
+        return [r for r in runs if r.get("injection_task")]
+    return list(runs)
+
+
+def headline(runs: list[dict]) -> list[dict]:
     rows = []
     for arm in sorted({r["arm"] for r in runs}):
         rs = [r for r in runs if r["arm"] == arm]
-        timing = [r for r in rs if not (exclude_429 and r["_429"])]
-        inj = [r for r in rs if r.get("injection_task")]
-        agent_ms = mean([r["telemetry"].get("agent_ms") for r in timing])
-        conseca_ms = mean([r["telemetry"].get("conseca_ms") for r in timing])
+        benign, attack = of_kind(rs, "benign"), of_kind(rs, "attack")
         rows.append(
             {
                 "arm": arm,
-                "runs": len(rs),
-                "utility": mean([1.0 if r["utility"] else 0.0 for r in rs]),
-                "asr": mean([1.0 if r["security"] else 0.0 for r in inj]) if inj else None,
-                "asr_n": len(inj),
-                "wall_s": mean([r["wall_seconds"] for r in timing]),
-                "agent_ms": agent_ms,
-                "conseca_ms": conseca_ms,
-                "conseca_over_agent": (conseca_ms / agent_ms) if agent_ms else None,
-                "agent_calls": mean([r["_agent_calls"] for r in rs]),
-                "conseca_calls": mean([r["_conseca_calls"] for r in rs]),
-                "tool_calls": mean([r["_tool_calls"] for r in rs]),
-                "agent_tokens_in": mean([r["_agent_in"] for r in rs]),
-                "agent_tokens_out": mean([r["_agent_out"] for r in rs]),
-                "conseca_tokens_in": mean([r["_conseca_in"] for r in rs]),
-                "conseca_tokens_out": mean([r["_conseca_out"] for r in rs]),
-                "runs_with_429": sum(1 for r in rs if r["_429"]),
-                "fail_open": sum(r["_fail_open"] for r in rs),
+                "utility": mean([1.0 if r["utility"] else 0.0 for r in benign]) if benign else None,
+                "utility_n": len(benign),
+                "utility_under_attack": mean([1.0 if r["utility"] else 0.0 for r in attack]) if attack else None,
+                "asr": mean([1.0 if r["security"] else 0.0 for r in attack]) if attack else None,
+                "attack_n": len(attack),
             }
         )
+    return rows
+
+
+def per_arm(runs: list[dict], exclude_429: bool, kinds: tuple[str, ...] = KINDS) -> list[dict]:
+    rows = []
+    for arm in sorted({r["arm"] for r in runs}):
+        for kind in kinds:
+            rs = of_kind([r for r in runs if r["arm"] == arm], kind)
+            if not rs:
+                continue
+            timing = [r for r in rs if not (exclude_429 and r["_429"])]
+            agent_ms = mean([r["telemetry"].get("agent_ms") for r in timing])
+            conseca_ms = mean([r["telemetry"].get("conseca_ms") for r in timing])
+            rows.append(
+                {
+                    "arm": arm,
+                    "kind": kind,
+                    "runs": len(rs),
+                    "utility": mean([1.0 if r["utility"] else 0.0 for r in rs]),
+                    "asr": mean([1.0 if r["security"] else 0.0 for r in rs]) if kind != "benign" else None,
+                    "wall_s": mean([r["wall_seconds"] for r in timing]),
+                    "agent_ms": agent_ms,
+                    "conseca_ms": conseca_ms,
+                    "conseca_over_agent": (conseca_ms / agent_ms) if agent_ms else None,
+                    "agent_calls": mean([r["_agent_calls"] for r in rs]),
+                    "conseca_calls": mean([r["_conseca_calls"] for r in rs]),
+                    "tool_calls": mean([r["_tool_calls"] for r in rs]),
+                    "agent_tokens_in": mean([r["_agent_in"] for r in rs]),
+                    "agent_tokens_out": mean([r["_agent_out"] for r in rs]),
+                    "conseca_tokens_in": mean([r["_conseca_in"] for r in rs]),
+                    "conseca_tokens_out": mean([r["_conseca_out"] for r in rs]),
+                    "runs_with_429": sum(1 for r in rs if r["_429"]),
+                    "fail_open": sum(r["_fail_open"] for r in rs),
+                }
+            )
     return rows
 
 
@@ -102,18 +139,21 @@ def paired(runs: list[dict]) -> list[dict]:
     for r in runs:
         by.setdefault(r["_key"], {})[r["arm"]] = r
     rows = []
-    for key in sorted(by):
+    # benign rows first, then attacks, each in task order
+    for key in sorted(by, key=lambda k: (not k.endswith("/noinjection"), k)):
         arms = by[key]
         if "off" not in arms or "on" not in arms:
             continue
         off, on = arms["off"], arms["on"]
+        attack = bool(off.get("injection_task"))
         rows.append(
             {
-                "task": key,
+                "task": f"{off['suite']}/{off['user_task']}",
+                "injection": off.get("injection_task") or "none",
                 "utility_off": off["utility"],
                 "utility_on": on["utility"],
-                "security_off": off["security"],
-                "security_on": on["security"],
+                "security_off": off["security"] if attack else None,
+                "security_on": on["security"] if attack else None,
                 "wall_off_s": off["wall_seconds"],
                 "wall_on_s": on["wall_seconds"],
                 "wall_ratio": (on["wall_seconds"] / off["wall_seconds"]) if off["wall_seconds"] else None,
@@ -139,7 +179,7 @@ def md_table(rows: list[dict], cols: list[tuple[str, str]]) -> str:
         cells = []
         for k, _ in cols:
             v = r.get(k)
-            if k in ("utility", "asr") and v is not None:
+            if k in ("utility", "asr", "utility_under_attack") and v is not None:
                 v = f"{v:.0%}"
             elif isinstance(v, bool):
                 v = "T" if v else "F"
@@ -152,8 +192,12 @@ def md_table(rows: list[dict], cols: list[tuple[str, str]]) -> str:
     return "\n".join([head, sep, *body])
 
 
+HEADLINE_COLS = [
+    ("arm", "arm"), ("utility", "utility (no injection)"), ("utility_n", "n"),
+    ("utility_under_attack", "utility under attack"), ("asr", "ASR"), ("attack_n", "n"),
+]
 ARM_COLS = [
-    ("arm", "arm"), ("runs", "runs"), ("utility", "utility"), ("asr", "ASR"), ("asr_n", "ASR n"),
+    ("arm", "arm"), ("kind", "kind"), ("runs", "runs"), ("utility", "utility"), ("asr", "ASR"),
     ("wall_s", "wall s"), ("agent_ms", "agent ms"), ("conseca_ms", "conseca ms"),
     ("conseca_over_agent", "conseca/agent"), ("agent_calls", "agent calls"),
     ("conseca_calls", "conseca calls"), ("tool_calls", "tool calls"),
@@ -162,7 +206,7 @@ ARM_COLS = [
     ("runs_with_429", "runs w/ 429"), ("fail_open", "fail-open"),
 ]
 PAIR_COLS = [
-    ("task", "task"), ("utility_off", "util off"), ("utility_on", "util on"),
+    ("task", "task"), ("injection", "injection"), ("utility_off", "util off"), ("utility_on", "util on"),
     ("security_off", "sec off"), ("security_on", "sec on"),
     ("wall_off_s", "wall off s"), ("wall_on_s", "wall on s"), ("wall_ratio", "on/off"),
     ("agent_ms_off", "agent off ms"), ("agent_ms_on", "agent on ms"), ("conseca_ms_on", "conseca ms"),
@@ -185,6 +229,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runs", default=str(HERE / "runs"))
     ap.add_argument("--suite", default=None)
+    ap.add_argument("--kind", choices=KINDS, default=None,
+                    help="restrict the per-arm and paired tables to benign (no injection) or attack runs")
     ap.add_argument("--exclude-429", action="store_true", help="drop runs with 429 retries from timing means")
     ap.add_argument("--csv", default=None, help="write the per-arm table as CSV")
     ap.add_argument("--paired-csv", default=None, help="write the paired table as CSV")
@@ -194,16 +240,21 @@ def main() -> int:
     if not runs:
         print(f"no result.json under {args.runs}")
         return 1
-    arms = per_arm(runs, args.exclude_429)
-    pairs = paired(runs)
+    head = headline(runs)
+    kinds = (args.kind,) if args.kind else KINDS
+    arms = per_arm(runs, args.exclude_429, kinds)
+    pairs = paired(of_kind(runs, args.kind) if args.kind else runs)
+    scope = f"{len(runs)} runs{', ' + args.suite if args.suite else ''}"
 
-    print(f"## per arm ({len(runs)} runs{', ' + args.suite if args.suite else ''}"
+    print(f"## headline ({scope})\n")
+    print(md_table(head, HEADLINE_COLS))
+    print(f"\n## per arm x kind ({scope}{', ' + args.kind + ' only' if args.kind else ''}"
           f"{', 429 runs excluded from timing' if args.exclude_429 else ''})\n")
     print(md_table(arms, ARM_COLS))
     print(f"\n## paired ({len(pairs)} tasks in both arms)\n")
     print(md_table(pairs, PAIR_COLS) if pairs else "(none yet: run both arms on the same tasks)")
-    on = next((a for a in arms if a["arm"] == "on"), None)
-    off = next((a for a in arms if a["arm"] == "off"), None)
+    on = next((a for a in arms if a["arm"] == "on" and a["kind"] == kinds[-1]), None)
+    off = next((a for a in arms if a["arm"] == "off" and a["kind"] == kinds[-1]), None)
     notes = []
     if off and off["conseca_ms"]:
         notes.append("off arm has Conseca time > 0: the settings.json toggle was not applied (see README trap 1)")
