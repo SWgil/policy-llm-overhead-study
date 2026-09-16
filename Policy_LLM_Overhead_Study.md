@@ -2,7 +2,7 @@
 
 > **목적**: 정책 강제(policy enforcing) 계열 IPI 방어에서 **정책 생성기(policy generator) LLM이 차지하는 실제 비용**을 단계별로 분해하고, 이를 경량 모델로 대체했을 때 방어 성능이 유지되는지 판정
 > **대상 논문**: Progent([arXiv:2504.11703](https://arxiv.org/abs/2504.11703)) · Conseca([arXiv:2501.17070](https://arxiv.org/abs/2501.17070), HotOS'25)
-> **선행 문서**: [IPI_LLM_Defense_Survey.md](IPI_LLM_Defense_Survey.md) §8(C6 정책 강제), [IPI_Defense_Rebuttals.md](IPI_Defense_Rebuttals.md) §4.1
+> **선행 문서**: IPI_LLM_Defense_Survey.md §8(C6 정책 강제), IPI_Defense_Rebuttals.md §4.1 — 이 저장소에서는 제거됨, git 이력(커밋 4a16bde 이전)에 있음
 > **작성일**: 2026-09-08
 > **상태**: §1~§5 확정(문헌·코드 근거 확보) / §6 파일럿 완료 / §7 잠정
 
@@ -49,7 +49,7 @@
 
 ## 1. 문제 정의 — 병목은 강제기가 아니라 생성기다
 
-선행 조사([IPI_LLM_Defense_Survey.md](IPI_LLM_Defense_Survey.md) §8)에서 정책 강제 계열이 1순위로 평가된 근거는 **결정론성**이었다. LLM 판정기는 오판이 곧 보안 구멍이 되지만, 심볼릭 정책은 로그로 증명 가능하고 감사에 강하다.
+선행 조사(IPI_LLM_Defense_Survey.md §8)에서 정책 강제 계열이 1순위로 평가된 근거는 **결정론성**이었다. LLM 판정기는 오판이 곧 보안 구멍이 되지만, 심볼릭 정책은 로그로 증명 가능하고 감사에 강하다.
 
 그런데 이 계열에는 구조적 딜레마가 있다. **정책을 누가 쓰는가?**
 
@@ -467,7 +467,7 @@ Progent의 프롬프트는 이를 명시적으로 경고한다 — *"완전한 �
 
 ### 6.6 gemini-cli Conseca 실측
 
-> 측정 대기. 하네스는 준비 완료(실행 절차는 [EXPERIMENT_README.md](EXPERIMENT_README.md)).
+> 측정 대기. 하네스는 준비 완료(실행 절차는 [progent-policy-overhead](https://github.com/SWgil/progent-policy-overhead) 저장소의 안내를 따른다).
 
 비교 구성 4종:
 
@@ -507,5 +507,5 @@ Progent의 프롬프트는 이를 명시적으로 경고한다 — *"완전한 �
 | Conseca 구현체 | https://github.com/google-gemini/gemini-cli | `packages/core/src/safety/conseca/` (stable v0.56.0+) |
 | Taxonomy, Evaluation and Exploitation of IPI-Centric LLM Agent Defense Frameworks (SoK) | [arXiv:2511.15203](https://arxiv.org/abs/2511.15203) | 통일 조건 재현 실측 (Progent vs Progent-LLM) |
 | AgentDojo | [arXiv:2406.13352](https://arxiv.org/abs/2406.13352) | 평가 벤치마크 |
-| 선행 조사 | [IPI_LLM_Defense_Survey.md](IPI_LLM_Defense_Survey.md) | C6 정책 강제 카테고리 평가 |
-| 반박 정리 | [IPI_Defense_Rebuttals.md](IPI_Defense_Rebuttals.md) | §4.1 Progent의 적용 범위 한계 |
+| 선행 조사 | IPI_LLM_Defense_Survey.md | C6 정책 강제 카테고리 평가 |
+| 반박 정리 | IPI_Defense_Rebuttals.md | §4.1 Progent의 적용 범위 한계 |
