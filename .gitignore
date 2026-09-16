@@ -8,3 +8,4 @@ conseca/runs/
 __pycache__/
 conseca/.venv/
 conseca/mcp_results/
+conseca/extracted/

@@ -8,6 +8,7 @@ Google `gemini-cli`에 내장된 Conseca(`security.enableConseca`)를 **켰을 �
 |---|---|
 | `run_task.py` | 태스크 단위 실행기. 초기화 → 워크스페이스 생성 → gemini 실행 → 채점 → 텔레메트리 요약. 태스크별 캐시로 중단 후 이어 돌림 |
 | `parse_telemetry.py` | gemini-cli 텔레메트리 파일에서 에이전트/Conseca 호출 비용과 판정을 뽑음 |
+| `extract_runs.py` | 끝난 런마다 프롬프트·점수·정책·주입된 툴 출력·판정·응답을 6개 JSON으로 분리([§4-1](#4-1-런별-내용-분리-extract_runspy)) |
 | `settings.template.json` | 태스크 워크스페이스에 들어가는 `.gemini/settings.json` 템플릿. 내장 툴 제외 목록 포함([§5-②](#-내장-툴은-toolsexclude로-뺀다--toolscore나-read_file은-쓰지-말-것)) |
 | `agentdojo_system.md` | AgentDojo 기본 시스템 메시지 원문. `GEMINI_SYSTEM_MD`로 gemini-cli의 시스템 프롬프트를 통째로 대체한다([§8](#8-원본-agentdojo와의-정렬)) |
 | `patch_cli.py` | 선택. 설치된 gemini-cli 번들에서 `<untrusted_context>` 래핑을 제거/복원([§8](#8-원본-agentdojo와의-정렬)) |
@@ -127,6 +128,28 @@ done
 | `conseca_fail_open` | 파싱 실패·예외로 Conseca가 **판단 없이 allow**한 횟수. 0이 아니면 그 런의 ASR은 방어가 아니라 부재를 재고 있다 |
 
 arm 간 비교는 (utility, ASR, 런당 벽시계, `agent_ms`, `conseca_ms`, 토큰)을 같은 태스크 집합에서 나란히 놓는다. off arm은 `conseca_*` 단계가 없어야 정상이다.
+
+### 4-1. 런별 내용 분리 (`extract_runs.py`)
+
+수치가 아니라 **무슨 일이 있었는지**를 보려면 런마다 세 파일(`result.json`, 브리지의 `mcp_results/…json`, `telemetry.log`)을 뒤져야 한다. `extract_runs.py`가 그걸 런당 6개 JSON으로 나눠 준다. 모델 호출 없음, venv 불필요(표준 라이브러리만).
+
+```bash
+python extract_runs.py                 # runs/ + mcp_results/ → extracted/<arm>/<task_id>/
+python extract_runs.py --arm on --suite banking
+```
+
+| 파일 | 내용 | 출처 |
+|---|---|---|
+| `user_prompt.json` | 사용자 태스크 프롬프트, 주입 목표(goal) | 브리지 결과 파일 (없으면 텔레메트리 `user_prompt` 이벤트) |
+| `scores.json` | utility, security, arm/suite/task, 모델, 벽시계 | `result.json` |
+| `policy.json` | Conseca 정책. 툴별 `permissions` / `constraints` / `rationale`. 파싱 실패면 `raw`에 원문 | 텔레메트리 `conseca.policy_generation` |
+| `injected_tools.json` | 출력에 주입이 들어간 브리지 툴 호출(인자와 **전체 출력**). 참고용으로 브리지가 실행한 모든 호출 목록도 포함 | 브리지 결과 파일의 `functions_stack_trace_details` |
+| `verdicts.json` | 툴 호출마다 enforcer 판정, `rationale`, fail-open 여부, 집계 | 텔레메트리 `conseca.verdict` |
+| `agent_response.json` | 에이전트 최종 응답 | `result.json` (브리지에 넘긴 `model_output`도 병기) |
+
+`extracted/index.json`에 런별 한 줄 요약이 남는다. off arm은 `policy.json`·`verdicts.json`이 비어 있어야 정상이다.
+
+주입 판정 기준: 툴 출력에 `ImportantInstructionsAttack`이 심는 `<INFORMATION>` 마커나 주입 목표 문장이 들어 있으면 "주입된 호출"로 친다. 브리지가 실행한 AgentDojo 툴만 대상이다. 내장 툴은 [§5-②](#-내장-툴은-toolsexclude로-뺀다--toolscore나-read_file은-쓰지-말-것)에 따라 제외돼 있고, 남아 있는 환경이라도 브리지를 거치지 않으므로 여기에는 안 나온다(판정은 `verdicts.json`에 있다). 브리지 결과 파일은 태스크를 다시 돌리면 덮어써지므로 `runs/`와 같은 시점의 것을 써야 한다.
 
 ---
 
