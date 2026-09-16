@@ -1,6 +1,4 @@
-# Upstream checkouts carrying this study's patches; they live in their own
-# repositories (see EXPERIMENT_README.md), not in this one.
-progent/
+# Optional local checkout of a patched gemini-cli (see conseca/README.md §7)
 gemini-cli/
 
 # Per-task workspaces and telemetry written by conseca/run_task.py

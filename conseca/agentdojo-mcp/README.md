@@ -1,8 +1,6 @@
 # agentdojo-mcp
 
-AgentDojo(v1.1.2)를 MCP 서버로 노출하는 브리지. [Progent](https://github.com/sunblaze-ucb/progent) 저장소의 `agentdojo-mcp/` 디렉터리를 그대로 가져온 것으로, 이 스터디의 Conseca 하네스(`../run_task.py`)가 gemini-cli에 AgentDojo 툴을 꽂기 위해 쓴다. Progent의 방어 코드(`secagent`)는 포함하지 않으며 import하지도 않는다.
-
-원본에서 문서·노트북·테스트 디렉터리는 뺐고 런타임에 필요한 것만 남겼다: `mcp_server.py`, `pyproject.toml`, `src/agentdojo/`(AgentDojo 소스와 스위트 데이터). 라이선스는 원본의 MIT(`LICENSE`).
+AgentDojo(v1.1.2)를 MCP 서버로 노출하는 브리지. 이 하네스(`../run_task.py`)가 gemini-cli에 AgentDojo 툴을 꽂기 위해 쓴다. 런타임에 필요한 것만 들어 있다: `mcp_server.py`, `pyproject.toml`, `src/agentdojo/`(AgentDojo 소스와 스위트 데이터). 라이선스는 MIT(`LICENSE`).
 
 ```bash
 uv pip install --python <venv python> ./agentdojo-mcp

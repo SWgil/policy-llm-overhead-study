@@ -52,7 +52,7 @@ from parse_telemetry import summarise  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 
-# Same suite shapes as progent/real-world-agents/run.py (AgentDojo v1.1.2).
+# Suite shapes of AgentDojo v1.1.2.
 SUITES = {
     "banking": (16, [f"injection_task_{i}" for i in range(9)]),
     "slack": (21, [f"injection_task_{i}" for i in range(1, 6)]),

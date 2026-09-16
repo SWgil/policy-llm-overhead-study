@@ -51,7 +51,7 @@ SUITE=slack ./run_pilot.sh --pilot
 | `settings.template.json` | 태스크 워크스페이스에 들어가는 `.gemini/settings.json`. Conseca 토글, 내장 툴 제외, temperature 0 |
 | `agentdojo_system.md` | AgentDojo 기본 시스템 메시지 원문. `GEMINI_SYSTEM_MD`로 CLI 프롬프트를 통째로 대체 |
 | `patch_cli.py` | 선택. 설치된 CLI 번들에서 `<untrusted_context>` 래핑을 제거/복원([§7](#7-원본-agentdojo와의-정렬)) |
-| `agentdojo-mcp/` | AgentDojo v1.1.2를 MCP로 노출하는 브리지(Progent에서 가져옴, 별도 클론 불필요) |
+| `agentdojo-mcp/` | AgentDojo v1.1.2를 MCP로 노출하는 브리지(동봉, 별도 클론 불필요) |
 | `results/` | 검증 실행의 텔레메트리 요약(off/on 각 1건) |
 
 실행 중 생기는 것(모두 git 제외): `runs/<arm>/<task_id>/`(result.json, telemetry.log, stdout/stderr, 사용된 settings.json), `mcp_results/`(브리지가 기록한 툴 호출·채점), `extracted/`, `bridge.log`.
