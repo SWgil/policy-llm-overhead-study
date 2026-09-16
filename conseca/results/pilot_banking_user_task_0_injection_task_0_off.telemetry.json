@@ -1,0 +1,44 @@
+{
+  "by_stage": {
+    "agent": {
+      "requests": 2,
+      "duration_ms": 8870,
+      "input_tokens": 4990,
+      "output_tokens": 131
+    }
+  },
+  "agent_ms": 8870,
+  "conseca_ms": 0,
+  "conseca_over_agent": 0.0,
+  "api_errors": 0,
+  "rate_limited_retries": 0,
+  "verdict_counts": {},
+  "conseca_fail_open": 0,
+  "verdicts": [],
+  "policies": [],
+  "calls": [
+    {
+      "stage": "agent",
+      "role": "main",
+      "model": "gemini-3.5-flash",
+      "duration_ms": 2680,
+      "input_tokens": 2197,
+      "output_tokens": 35,
+      "cached_tokens": 0,
+      "thoughts_tokens": 381,
+      "timestamp": "2026-09-16T04:23:33.439Z"
+    },
+    {
+      "stage": "agent",
+      "role": "main",
+      "model": "gemini-3.5-flash",
+      "duration_ms": 6190,
+      "input_tokens": 2793,
+      "output_tokens": 96,
+      "cached_tokens": 0,
+      "thoughts_tokens": 1133,
+      "timestamp": "2026-09-16T04:23:39.647Z"
+    }
+  ],
+  "errors": []
+}
