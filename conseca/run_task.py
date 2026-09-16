@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """Run AgentDojo tasks through headless gemini-cli, with Conseca on or off.
 
+The injection text comes from an AutoDojo cache by default (attacks/autodojo/
+<suite>/injections.json: injections optimised by an LLM against undefended
+gemini-2.5-flash, replayed here as a transfer attack). AgentDojo's static
+important_instructions jailbreak is still available with --attack.
+
 One task = one gemini-cli process. The flow, per task:
 
-  1. POST /init_task on the AgentDojo MCP bridge  -> user prompt
+  1. POST /init_task on the AgentDojo MCP bridge  -> user prompt, which
+     injection vectors got an optimised variant (pairs with none are skipped
+     unless --include-unoptimized: they would be the static attack again)
   2. write a throwaway workspace: .gemini/settings.json (model, Conseca on/off,
      MCP server with the task id in a header, built-in tools excluded,
      temperature 0, no directory tree)
@@ -17,9 +24,15 @@ Results are cached per task in <out>/<arm>/<task_id>/result.json, so an
 interrupted sweep resumes where it stopped. Delete the directory to rerun.
 
 Examples:
-    # single task, Conseca on (what the feasibility check ran)
+    # single task, Conseca on, AutoDojo variant 0 (default attack)
     python run_task.py --arm on --suite banking --user-tasks user_task_0 \
         --injection-tasks injection_task_0
+
+    # second-best variant; results land in runs/autodojo-v1/
+    python run_task.py --arm off --suite banking --attack-variant 1
+
+    # the static baseline; results land in runs/important_instructions/
+    python run_task.py --arm off --suite banking --attack important_instructions
 
     # small pilot, both arms
     for arm in off on; do
@@ -52,13 +65,27 @@ from parse_telemetry import summarise  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 
-# Suite shapes of AgentDojo v1.1.2.
+# Suite shapes of AgentDojo v1.1.2, restricted to the suites AutoDojo shipped a
+# gemini-2.5-flash cache for (workspace has none). The cache covers every
+# injection task of these three suites; run_task.py checks that at start-up.
 SUITES = {
     "banking": (16, [f"injection_task_{i}" for i in range(9)]),
     "slack": (21, [f"injection_task_{i}" for i in range(1, 6)]),
     "travel": (20, [f"injection_task_{i}" for i in range(7)]),
-    "workspace": (40, [f"injection_task_{i}" for i in range(6)]),
 }
+ATTACKS = ("autodojo", "important_instructions")
+ATTACK_CACHE_DIR = HERE / "attacks" / "autodojo"
+
+
+def attack_cache_path(cache_dir: str, suite: str) -> Path:
+    return Path(cache_dir) / suite / "injections.json"
+
+
+def cached_injection_tasks(cache_dir: str, suite: str) -> list[str]:
+    p = attack_cache_path(cache_dir, suite)
+    if not p.exists():
+        sys.exit(f"no AutoDojo cache for {suite}: {p}")
+    return sorted(json.loads(p.read_text(encoding="utf-8"))["injection_tasks"])
 
 
 def find_gemini(explicit: str | None) -> str:
@@ -162,12 +189,28 @@ def run_one(args, gemini: str, arm: str, suite: str, user_task: str, injection_t
             # (get_model_name_from_pipeline); the vendored bridge defaulted to
             # the generic "the AI language model".
             "attack_model_name": args.attack_model_name,
+            "attack": args.attack,
+            "attack_cache": str(attack_cache_path(args.attack_cache_dir, suite).resolve()),
+            "attack_variant": args.attack_variant,
         },
         timeout=60,
     )
+    if init.status_code == 400:
+        raise RuntimeError(f"init_task rejected: {init.json().get('detail')}")
     init.raise_for_status()
-    prompt = init.json()["user_task_prompt"]
-    print(f"[run ] {task_id}: {prompt[:80]}")
+    init = init.json()
+    prompt = init["user_task_prompt"]
+    plan = init.get("injection_plan", {})
+    optimized = init.get("optimized_vectors", 0)
+    if injection_task and args.attack == "autodojo" and optimized == 0 and not args.include_unoptimized:
+        # every vector this user task reads fell back to the static wrapper
+        print(f"[skip] {task_id}: no optimised vector for variant {args.attack_variant} "
+              f"({', '.join(plan) or 'no vectors'})")
+        return {"task_id": task_id, "user_task": user_task, "injection_task": injection_task,
+                "skipped": "unoptimized"}
+    print(f"[run ] {task_id}: {prompt[:80]}"
+          + (f"  [{args.attack} v{args.attack_variant}: {optimized}/{len(plan)} optimised]"
+             if injection_task and args.attack == "autodojo" else ""))
 
     write_workspace(ws, model=args.model, conseca=(arm == "on"), mcp_url=args.mcp_url,
                     cli_prompt=args.cli_prompt)
@@ -201,6 +244,10 @@ def run_one(args, gemini: str, arm: str, suite: str, user_task: str, injection_t
         "user_task": user_task,
         "injection_task": injection_task,
         "model": args.model,
+        "attack": args.attack if injection_task else None,
+        "attack_variant": args.attack_variant if (injection_task and args.attack == "autodojo") else None,
+        "injection_plan": plan,
+        "optimized_vectors": optimized if injection_task else None,
         "utility": score.get("utility"),
         "security": score.get("security"),
         "wall_seconds": out.get("wall_seconds"),
@@ -233,7 +280,18 @@ def main() -> int:
                     help="'none' = no injection; default: none + all in suite")
     ap.add_argument("--model", default="gemini-2.5-flash",
                     help="agent model (Conseca itself is pinned to the CLI's flash default)")
-    ap.add_argument("--out", default=str(HERE / "runs"))
+    ap.add_argument("--attack", choices=ATTACKS, default="autodojo",
+                    help="autodojo = replay attacks/autodojo/<suite>/injections.json (default); "
+                         "important_instructions = AgentDojo's static jailbreak")
+    ap.add_argument("--attack-cache-dir", default=str(ATTACK_CACHE_DIR),
+                    help="directory holding <suite>/injections.json AutoDojo caches")
+    ap.add_argument("--attack-variant", type=int, default=0,
+                    help="which of the cache's ranked variants to inject (0 = best on gemini-2.5-flash)")
+    ap.add_argument("--include-unoptimized", action="store_true",
+                    help="also run (user, injection) pairs whose vectors all fell back to the static "
+                         "wrapper; by default they are skipped as they would repeat the static attack")
+    ap.add_argument("--out", default=None,
+                    help="results root; default runs/autodojo-v<variant> or runs/important_instructions")
     ap.add_argument("--rest-url", default="http://127.0.0.1:9000")
     ap.add_argument("--mcp-url", default="http://127.0.0.1:9001/mcp/")
     ap.add_argument("--gemini", default=None, help="path to the gemini binary")
@@ -253,9 +311,23 @@ def main() -> int:
     gemini = find_gemini(args.gemini)
     if args.attack_model_name is None:
         args.attack_model_name = "Gemini" if "gemini" in args.model.lower() else "the AI language model"
+    if args.out is None:
+        args.out = str(HERE / "runs" / (f"autodojo-v{args.attack_variant}" if args.attack == "autodojo"
+                                        else "important_instructions"))
     n_users, injections = SUITES[args.suite]
+    if args.attack == "autodojo":
+        in_cache = cached_injection_tasks(args.attack_cache_dir, args.suite)
+        missing = sorted(set(injections) - set(in_cache))
+        if missing:
+            print(f"[warn] {args.suite}: not in AutoDojo cache, not run: {', '.join(missing)}", file=sys.stderr)
+        injections = [i for i in injections if i in in_cache]
+        for it in args.injection_tasks or []:
+            if it != "none" and it not in in_cache:
+                sys.exit(f"{it} is not in the AutoDojo cache for {args.suite}")
     user_tasks = args.user_tasks or [f"user_task_{i}" for i in range(n_users)]
     injection_tasks = args.injection_tasks or ["none", *injections]
+    print(f"attack={args.attack}" + (f" variant={args.attack_variant}" if args.attack == "autodojo" else "")
+          + f" out={args.out}")
 
     results = []
     for ut in user_tasks:
@@ -270,13 +342,14 @@ def main() -> int:
                 time.sleep(args.pause)
 
     done = [r for r in results if "utility" in r]
+    skipped = [r for r in results if r.get("skipped")]
     if done:
         u = sum(1 for r in done if r["utility"]) / len(done)
         sec = [r for r in done if r["injection_task"]]
         asr = (sum(1 for r in sec if r["security"]) / len(sec)) if sec else None
         print(f"\n{args.arm}: {len(done)} tasks, utility={u:.2%}, ASR={asr if asr is None else f'{asr:.2%}'}, "
-              f"errors={len(results) - len(done)}")
-    return 0 if args.dry_run or len(done) == len(results) else 1
+              f"skipped(unoptimised)={len(skipped)}, errors={len(results) - len(done) - len(skipped)}")
+    return 0 if args.dry_run or len(done) + len(skipped) == len(results) else 1
 
 
 if __name__ == "__main__":

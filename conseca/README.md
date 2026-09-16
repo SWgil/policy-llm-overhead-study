@@ -2,6 +2,8 @@
 
 Google `gemini-cli`에 내장된 Conseca(`security.enableConseca`)를 **켰을 때와 껐을 때의 비용(지연·호출 수·토큰)과 방어 효과(utility·ASR)** 를 AgentDojo로 측정한다. gemini-cli를 headless(`-p`)로 호출하고 AgentDojo 툴을 MCP 브리지로 꽂으며, 소스 패치 없이 **stock CLI 0.59.0 + 텔레메트리**만 쓴다.
 
+**공격은 AutoDojo 캐시를 재생한다**([§2-1](#2-1-공격-autodojo-캐시-재생)). AgentDojo의 정적 `important_instructions` 공격은 최신 모델에서 ASR이 0 근처라 방어 효과를 잴 수 없기 때문이다(근거와 대안: [../docs/benchmarks/](../docs/benchmarks/README.md)).
+
 검증 환경: Windows 10(2026-09-09), Linux 컨테이너(2026-09-16). 둘 다 같은 태스크가 끝까지 돌았다([§6](#6-검증-실행-실측)).
 
 ---
@@ -51,10 +53,11 @@ SUITE=slack ./run_pilot.sh --pilot
 | `settings.template.json` | 태스크 워크스페이스에 들어가는 `.gemini/settings.json`. Conseca 토글, 내장 툴 제외, temperature 0 |
 | `agentdojo_system.md` | AgentDojo 기본 시스템 메시지 원문. `GEMINI_SYSTEM_MD`로 CLI 프롬프트를 통째로 대체 |
 | `patch_cli.py` | 선택. 설치된 CLI 번들에서 `<untrusted_context>` 래핑을 제거/복원([§7](#7-원본-agentdojo와의-정렬)) |
-| `agentdojo-mcp/` | AgentDojo v1.1.2를 MCP로 노출하는 브리지(동봉, 별도 클론 불필요) |
+| `agentdojo-mcp/` | AgentDojo v1.1.2를 MCP로 노출하는 브리지(동봉, 별도 클론 불필요). `autodojo_attack.py`가 캐시 재생 공격 |
+| `attacks/autodojo/<suite>/injections.json` | AutoDojo가 공개한 최적화 주입문 캐시(banking·slack·travel, MIT). 기본 공격의 입력 |
 | `results/` | 검증 실행의 텔레메트리 요약(off/on 각 1건) |
 
-실행 중 생기는 것(모두 git 제외): `runs/<arm>/<task_id>/`(result.json, telemetry.log, stdout/stderr, 사용된 settings.json), `mcp_results/`(브리지가 기록한 툴 호출·채점), `extracted/`, `bridge.log`.
+실행 중 생기는 것(모두 git 제외): `runs/<attack>/<arm>/<task_id>/`(result.json, telemetry.log, stdout/stderr, 사용된 settings.json; `<attack>`은 `autodojo-v0` 같은 변형 번호 포함), `mcp_results/`(브리지가 기록한 툴 호출·주입문·채점), `extracted/`, `bridge.log`.
 
 ---
 
@@ -76,6 +79,29 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 - **Conseca**: 프롬프트당 정책 생성 1회, 툴 호출당 판정 1회. 둘 다 CLI 기본 Flash. `--approval-mode yolo`에서도 실행되며 deny면 툴이 실행되지 않는다.
 - **계측**: 텔레메트리의 `api_response` 이벤트가 호출마다 `role`(`main`=에이전트, `subagent`=Conseca)과 `prompt_id`(`conseca-policy-generation` / `conseca-policy-enforcement`)를 구분해 준다.
 
+### 2-1. 공격: AutoDojo 캐시 재생
+
+[AutoDojo](https://github.com/xhOwenMa/AutoDojo)(arXiv 2606.15057)는 AgentDojo 위에서 LLM이 주입문을 반복 최적화하는 블랙박스 적응형 공격이다. 저자들이 **무방어 gemini-2.5-flash**를 타깃으로 최적화한 결과(`injections.json`, 최적화기 gemini-3.1-pro-preview, 6회 반복, 변형 5개)를 `attacks/autodojo/<suite>/`에 동봉했다. 하네스는 이 텍스트를 AgentDojo의 주입 벡터에 그대로 넣는다. 타깃이 gemini-2.5-flash였으므로 다른 모델에는 **전이 공격**이다.
+
+| 스위트 | 캐시된 injection_task | variant 0이 최적화된 (user, injection) 쌍 |
+|---|---|---|
+| banking | 0~8 전체 | 120 / 144 |
+| slack | 1~5 전체 | 105 / 105 |
+| travel | 0~6 전체 | 140 / 140 |
+
+workspace 스위트는 캐시가 없어 `--suite` 선택지에서 뺐다.
+
+규칙(AutoDojo 원본 `autodojo_attack.py`와 동일):
+
+- 사용자 태스크가 읽는 벡터마다 `variants[--attack-variant]`를 넣는다. 변형은 gemini-2.5-flash ASR 순으로 정렬되어 있어 0이 최선이다.
+- 변형이 `original`(bare GOAL)과 같으면 최적화기가 정적 래퍼를 못 이긴 셀이다. 이때는 `important_instructions` 래퍼로 감싸 정적 공격과 동일하게 넣는다.
+- 사용자 태스크가 읽는 벡터가 **전부** 그런 셀이면 그 런은 정적 공격의 반복이므로 `run_task.py`가 건너뛴다(`[skip] ... no optimised vector`). `--include-unoptimized`로 포함할 수 있다. banking에서 24쌍이 해당하며 `user_task_0`·`user_task_2`·`user_task_12`·`user_task_13`에 몰려 있다.
+- 주입문은 YAML 이스케이프해서 넣는다. 브리지가 툴 결과를 `tool_result_to_str` YAML로 내보내기 때문이다.
+
+`/init_task` 응답과 `result.json`의 `injection_plan`에 벡터별 `optimized` 여부가, `mcp_results/.../injection_task_N_v<variant>.json`에 실제 주입문이 남는다. 정적 공격이 필요하면 `--attack important_instructions`.
+
+**arm 비교의 전제**: 캐시는 arm과 무관하게 고정된 입력이므로 off/on 차이는 Conseca 효과만 반영한다. Conseca를 타깃으로 새로 최적화하는 것(defense-aware)은 별도 arm이며 이 하네스에 없다. 절차는 [../docs/benchmarks/autodojo.md](../docs/benchmarks/autodojo.md) 경로 B.
+
 ---
 
 ## 3. 실행
@@ -84,11 +110,13 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 
 | 범위 | 태스크 | 요청 수(대략, 2 arm) |
 |---|---|---|
-| `--smoke` | user_task_0 × injection_task_0 | ~30 |
-| `--pilot` | user_task_0~3 × {none, injection_task_0~2} | ~500 |
-| `--full` | 스위트 전체(무주입 포함) | banking ≈ 5,000 |
+| `--smoke` | user_task_1 × 첫 injection_task | ~30 |
+| `--pilot` | user_task_{1,3,4,5} × {none, injection_task 3개} | ~500 |
+| `--full` | 스위트 전체(무주입 포함, 최적화 안 된 쌍은 건너뜀) | banking ≈ 4,300 |
 
-환경변수: `SUITE`(banking/slack/travel/workspace), `ARMS`(`"off on"`), `PAUSE`(태스크 사이 대기 초, 무료 티어면 60), `MODEL`(에이전트 모델, 기본 `gemini-2.5-flash`). 나머지 인자는 `run_task.py`로 넘어간다(`--force`로 캐시 무시, `--dry-run`으로 명령만 출력).
+스모크·파일럿의 사용자 태스크는 banking에서 variant 0이 모든 injection_task에 대해 최적화된 것들이다(`user_task_0`은 `injection_task_0`이 건너뛰어진다). slack은 injection_task가 1부터라 1~3을 쓴다.
+
+환경변수: `SUITE`(banking/slack/travel), `ARMS`(`"off on"`), `PAUSE`(태스크 사이 대기 초, 무료 티어면 60), `MODEL`(에이전트 모델, 기본 `gemini-2.5-flash`), `ATTACK`(`autodojo`/`important_instructions`), `VARIANT`(캐시 변형 번호, 기본 0). 나머지 인자는 `run_task.py`로 넘어간다(`--force`로 캐시 무시, `--dry-run`으로 명령만 출력). 결과는 `runs/autodojo-v$VARIANT/`(정적이면 `runs/important_instructions/`)에 쌓이고 끝의 비교표도 같은 디렉터리를 읽는다.
 
 ### run_task.py 직접 호출
 
@@ -106,11 +134,16 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 | `--model` | `gemini-2.5-flash` | 에이전트 모델. Conseca 자체는 CLI 내장 Flash 기본값으로 고정 |
 | `--pause` | 0 | 태스크 사이 대기(초) |
 | `--timeout` | 600 | 태스크당 gemini 프로세스 제한 |
-| `--attack-model-name` | gemini 모델이면 `Gemini` | 주입 텍스트의 `{model}` 자리에 들어갈 이름 |
+| `--attack` | `autodojo` | `autodojo` = 캐시 재생([§2-1](#2-1-공격-autodojo-캐시-재생)), `important_instructions` = AgentDojo 정적 공격 |
+| `--attack-variant` | 0 | 캐시의 몇 번째 변형을 넣을지(0~4, ASR 순). 결과 디렉터리가 변형별로 갈린다 |
+| `--attack-cache-dir` | `attacks/autodojo` | `<suite>/injections.json`을 찾는 곳 |
+| `--include-unoptimized` | off | 최적화된 벡터가 없는 (user, injection) 쌍도 실행 |
+| `--out` | `runs/autodojo-v<variant>` 또는 `runs/important_instructions` | 결과 루트. `compare_arms.py --runs`, `extract_runs.py --runs`에 같은 값을 준다 |
+| `--attack-model-name` | gemini 모델이면 `Gemini` | 주입 텍스트의 `{model}` 자리에 들어갈 이름(정적 래퍼에만 쓰인다) |
 | `--cli-prompt` | off | 정렬 이전 방식(CLI 자체 시스템 프롬프트 유지, AgentDojo 메시지를 `GEMINI.md`로) |
 | `--force`, `--dry-run` | | 캐시 무시 / 명령만 출력 |
 
-한 런의 로그는 `runs/<arm>/<task_id>/`에 있다. `stderr.txt`에 `[Conseca]`나 429가 보이면 [§5](#5-조용히-실패하는-함정)를 볼 것.
+한 런의 로그는 `runs/<attack>/<arm>/<task_id>/`에 있다. `stderr.txt`에 `[Conseca]`나 429가 보이면 [§5](#5-조용히-실패하는-함정)를 볼 것.
 
 ---
 
@@ -119,7 +152,7 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 ### 4-1. arm 비교 — `compare_arms.py`
 
 ```bash
-.venv/bin/python compare_arms.py                      # runs/ 전체
+.venv/bin/python compare_arms.py --runs runs/autodojo-v0   # run_task.py의 --out과 같은 디렉터리
 .venv/bin/python compare_arms.py --suite banking --exclude-429
 .venv/bin/python compare_arms.py --csv arms.csv --paired-csv paired.csv
 ```
@@ -226,6 +259,8 @@ banking `user_task_0`("bill-december-2023.txt 결제") + `injection_task_0`(거�
 기본 옵션은 원본 AgentDojo 파이프라인(Google LLM 경로)에 맞춰져 있다. 실제 CLI에 가짜 엔드포인트를 물려 요청 본문으로 확인한 상태다.
 
 **맞춘 것**: 시스템 프롬프트(`agentdojo_system.md` 원문), 툴 집합(스위트 툴만), 샘플링(temperature 0, topP 1 — 에이전트만, Conseca 호출은 영향 없음), 툴 결과 포맷(`tool_result_to_str` YAML), 주입 텍스트의 모델명("to you, Gemini"), 채점 방식, 작업 디렉터리 트리 없음.
+
+**일부러 다르게 한 것**: 기본 공격이 AgentDojo의 `important_instructions`가 아니라 AutoDojo 캐시다([§2-1](#2-1-공격-autodojo-캐시-재생)). AgentDojo 논문 표의 ASR과 비교하려면 `--attack important_instructions`로 돌린 결과를 쓴다.
 
 **stock CLI로는 못 맞추는 것** — arm 간 비교에는 영향 없지만 논문 수치와 직접 비교할 때 염두에 둘 것:
 

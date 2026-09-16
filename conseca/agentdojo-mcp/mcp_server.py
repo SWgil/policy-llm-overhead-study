@@ -6,6 +6,7 @@ import threading
 from typing import Optional
 import os
 import re
+import sys
 
 from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
 from agentdojo.agent_pipeline.tool_execution import tool_result_to_str
@@ -13,6 +14,9 @@ from agentdojo.functions_runtime import FunctionsRuntime, FunctionCall
 from agentdojo.task_suite.load_suites import get_suite
 from agentdojo.task_suite.task_suite import TaskSuite
 from agentdojo.attacks.important_instructions_attacks import ImportantInstructionsAttack
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from autodojo_attack import AutoDojoAttack  # noqa: E402
 
 from mcp import ErrorData
 import uvicorn
@@ -39,6 +43,11 @@ class InitTaskRequest(BaseModel):
     # Substituted for {model} in the injection text. Upstream AgentDojo derives
     # it from the pipeline (e.g. "Gemini"); the default keeps the generic name.
     attack_model_name: Optional[str] = None
+    # "autodojo": replay an AutoDojo injections.json cache (attack_cache required).
+    # "important_instructions": AgentDojo's static jailbreak.
+    attack: str = "autodojo"
+    attack_cache: Optional[str] = None
+    attack_variant: int = 0
 
 
 class FinishTaskRequest(BaseModel):
@@ -55,13 +64,34 @@ def init_task_endpoint(request: InitTaskRequest):
     if request.injection_task_id is None:
         injection_task = None
         task_injections = {}
+        injection_plan = {}
     else:
         injection_task = task_suite.get_injection_task_by_id(
             request.injection_task_id)
-        attack = ImportantInstructionsAttack(task_suite, BasePipelineElement)
-        if request.attack_model_name:
-            attack.model_name = request.attack_model_name
-        task_injections = attack.attack(user_task, injection_task)
+        if request.attack == "important_instructions":
+            attack = ImportantInstructionsAttack(task_suite, BasePipelineElement)
+            if request.attack_model_name:
+                attack.model_name = request.attack_model_name
+            task_injections = attack.attack(user_task, injection_task)
+            injection_plan = {v: {"optimized": False} for v in task_injections}
+        elif request.attack == "autodojo":
+            if not request.attack_cache:
+                raise HTTPException(status_code=400, detail="attack=autodojo needs attack_cache")
+            try:
+                attack = AutoDojoAttack(
+                    task_suite, BasePipelineElement, request.attack_cache, request.attack_variant,
+                    model_name=request.attack_model_name or "the AI language model")
+            except (OSError, ValueError, KeyError) as e:
+                raise HTTPException(status_code=400, detail=f"bad attack_cache: {e}")
+            if not attack.has_injection_task(request.injection_task_id):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{request.injection_task_id} is not in {request.attack_cache}")
+            plan = attack.plan(user_task, injection_task)
+            task_injections = {v: p["text"] for v, p in plan.items()}
+            injection_plan = {v: {"optimized": p["optimized"]} for v, p in plan.items()}
+        else:
+            raise HTTPException(status_code=400, detail=f"unknown attack {request.attack!r}")
     environment = task_suite.load_and_inject_default_environment(
         task_injections)
     runtime = FunctionsRuntime(task_suite.tools)
@@ -78,11 +108,22 @@ def init_task_endpoint(request: InitTaskRequest):
         "runtime": runtime,
         "functions_stack_trace": [],
         "functions_stack_trace_details": [],
+        "attack": request.attack if injection_task is not None else None,
+        "attack_variant": (request.attack_variant
+                           if injection_task is not None and request.attack == "autodojo" else None),
+        "injections": task_injections,
+        "injection_plan": injection_plan,
     }
     return {
         "message": f"Successfully initialized task '{request.task_id}'",
         "tools_count": len(task_suite.tools),
         "user_task_prompt": user_task.PROMPT,
+        "attack": data[request.task_id]["attack"],
+        "attack_variant": data[request.task_id]["attack_variant"],
+        # per injection vector the user task reads: was the text an optimised
+        # AutoDojo variant (True) or the static important_instructions fallback
+        "injection_plan": injection_plan,
+        "optimized_vectors": sum(1 for p in injection_plan.values() if p["optimized"]),
     }
 
 
@@ -115,11 +156,13 @@ def finish_task_endpoint(request: FinishTaskRequest):
     task_id = task_data["task_id"]
     pattern = r'^(\w+)_([\w]+)_(user_task_\d+)_(injection_task_\d+|noinjection)$'
     match = re.match(pattern, task_id)
+    # AutoDojo variants share a task id, so the variant index goes in the file name.
+    suffix = f"_v{task_data['attack_variant']}" if task_data.get("attack_variant") is not None else ""
     if match:
         agent_type, suite, user_task, injection_task = match.groups()
-        filename = f"{agent_type}/{suite}/{user_task}/{injection_task}.json"
+        filename = f"{agent_type}/{suite}/{user_task}/{injection_task}{suffix}.json"
     else:
-        filename = f"others/{task_id}.json"
+        filename = f"others/{task_id}{suffix}.json"
     os.makedirs(os.path.dirname(f"{RESULT_DIR}/{filename}"), exist_ok=True)
     with open(f"{RESULT_DIR}/{filename}", "w") as f:
         json.dump({
@@ -128,6 +171,10 @@ def finish_task_endpoint(request: FinishTaskRequest):
             "injection_task_id": task_data["injection_task_id"],
             "user_prompt": task_data["user_task"].PROMPT,
             "injection_goal": task_data["injection_task"].GOAL if task_data["injection_task"] else None,
+            "attack": task_data.get("attack"),
+            "attack_variant": task_data.get("attack_variant"),
+            "injections": task_data.get("injections"),
+            "injection_plan": task_data.get("injection_plan"),
             "functions_stack_trace": task_data["functions_stack_trace"],
             "functions_stack_trace_details": task_data["functions_stack_trace_details"],
             "model_output": request.model_output,

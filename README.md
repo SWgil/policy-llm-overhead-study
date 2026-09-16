@@ -19,6 +19,6 @@ export GEMINI_API_KEY=...
 
 | 경로 | 내용 |
 |---|---|
-| [`conseca/`](conseca/README.md) | 하네스 본체. stock gemini-cli를 headless로 호출해 AgentDojo에서 Conseca on/off 비용과 방어 효과를 잰다. 세팅·실행·분석 스크립트 포함 |
+| [`conseca/`](conseca/README.md) | 하네스 본체. stock gemini-cli를 headless로 호출해 AgentDojo에서 Conseca on/off 비용과 방어 효과를 잰다. 공격은 AutoDojo 캐시 재생이 기본. 세팅·실행·분석 스크립트 포함 |
 | [`conseca/agentdojo-mcp/`](conseca/agentdojo-mcp/README.md) | AgentDojo v1.1.2를 MCP로 노출하는 브리지(동봉) |
 | [`docs/benchmarks/`](docs/benchmarks/README.md) | 최신 모델에서 AgentDojo ASR이 0 근처인 이유(문헌)와, 대신 쓸 공격·벤치마크 후보(AutoDojo, AgentDyn, IPI Arena, DTap, ClawTrojan, LivePI, RL 공격기)별 분석과 이 하네스 적용 절차 |

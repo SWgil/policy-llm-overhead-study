@@ -37,35 +37,15 @@
 
 저자들이 **이미 만들어 커밋해 둔** `injections.json`을 말한다. 최적화 LLM(`google/gemini-3.1-pro-preview`)이 gemini-2.5-flash 무방어 에이전트를 타깃으로 6회 반복해 얻은 주입문이며, 다운로드해서 그대로 쓰면 된다. 별도 생성 작업은 없다. 다만 타깃이 gemini-2.5-flash였으므로 gemini-3.5-flash에 쓰면 "다른 모델용으로 최적화된 공격을 옮겨 쓰는" 전이 공격이 된다. 이 하네스의 모델을 타깃으로 새로 만드는 것이 아래 경로 B다.
 
-공개 캐시의 실제 범위(2026-09-16 확인, `google/gemini-2.5-flash/no_defense`):
+공개 캐시의 실제 범위(2026-09-16, 파일을 내려받아 확인. `google/gemini-2.5-flash/no_defense`, 최적화 LLM `google/gemini-3.1-pro-preview`, 6회 반복, 변형 5개):
 
-| 스위트 | 포함된 injection_task | 벡터 수 | 2.5-flash에서 기록된 최고 ASR |
-|---|---|---|---|
-| banking | 0, 1, 2 (전체 9개 중) | 4 | 벡터별 0.67~1.0 |
-| slack | 3개 | 5 | 0.4~0.73 |
-| travel | 최소 1개 (파일 일부만 확인) | 10 | 벡터별 0.0~1.0, 절반 이상 0 |
+| 스위트 | 포함된 injection_task | 벡터 수 | 벡터 id가 번들 스위트(v1.1.2)와 일치 | variant 0이 최적화된 (user, injection) 쌍 |
+|---|---|---|---|---|
+| banking | 0~8 (전체) | 4 | 일치 | 120 / 144 |
+| slack | 1~5 (전체) | 5 | 일치 | 105 / 105 |
+| travel | 0~6 (전체) | 13 | 일치 | 140 / 140 |
 
-즉 **스위트 전체가 아니라 injection_task 일부만** 최적화되어 있다. 캐시에 없는 injection_task는 `autodojo_attack.py`가 `injection_task.GOAL`을 `important_instructions` 템플릿으로 감싸 정적 공격과 같게 돌린다. 또 어떤 셀은 `variants[0]`이 `original`과 사실상 같은데, 이 경우도 정적 공격으로 후퇴한다. 전이 재생 결과를 볼 때 "캐시에 있던 셀"과 "후퇴한 셀"을 나눠 집계해야 한다.
-
-### 공개 수치 (논문, GPT-4o-mini 집계)
-
-| 방어 | 정적 ASR | AutoDojo ASR |
-|---|---|---|
-| PIGuard | 0.0% | 28.0% |
-| DataFilter | 12.6% | 33.4% |
-| ProtectAI | 7.2% | 15.4% |
-| Progent | 8.2% | 7.7% |
-| DRIFT | 2.6% | 6.4% |
-
-태스크 등급별(무방어): action-open 90.5% vs fully-specified 54.8%. 필터·프롬프트 방어는 action-open에서 구조적으로 약하고, 시스템 수준 방어(Progent, DRIFT)는 적응형 공격에도 버틴다. **Conseca는 Progent 계열(정책 기반 시스템 수준 방어)이므로 이 벤치마크가 Conseca에 유리한 결과를 낼 가능성이 있고, 그 자체가 보고할 만한 결과다.**
-
-타깃 모델 5종: GPT-4o-mini, GPT-5.4-mini, Gemini-2.5-Flash, DeepSeek-v4-Flash, Claude-Haiku-4.5.
-
-### 이 연구와의 궁합
-
-- 장점: 스위트·채점·툴이 AgentDojo 그대로라 브리지 REST/MCP 인터페이스를 바꿀 필요가 없다. 비용 측정 파이프라인(텔레메트리, `compare_arms.py`)도 그대로다.
-- 단점: 공개 캐시는 gemini-2.5-flash에 맞춘 것이라 gemini-3.5-flash에는 **전이 공격**이다. 논문 수치보다 낮게 나올 수 있다. 직접 최적화하려면 평가기를 gemini-cli 호출로 바꿔야 한다.
-- 주의: AutoDojo 번들 `agentdojo/`는 AgentDyn 스위트를 포함한 포크다. 이 저장소의 `agentdojo-mcp/src/agentdojo`(0.1.29 기반, 스위트 v1.1.2)와 데이터가 같은지 확인해야 캐시의 vector_id가 맞는다. 다르면 AutoDojo 포크를 브리지 소스로 쓰는 편이 안전하다.
+즉 세 스위트의 **모든 injection_task**가 들어 있다. 다만 banking의 일부 셀은 최적화기가 정적 래퍼를 이기지 못해 `variants[0]`이 `original`과 같고, 이 경우 `autodojo_attack.py`가 `important_instructions` 래퍼로 후퇴한다. 사용자 태스크가 읽는 벡터가 전부 이런 셀이면 그 런은 정적 공격과 동일하므로, 이 저장소의 `run_task.py`는 기본적으로 건너뛴다(`--include-unoptimized`로 포함). banking에서는 24쌍이 여기에 해당하고, 특히 `user_task_0 × injection_task_0`(기존 스모크 쌍)이 그렇다.
 
 ## 2. 하네스 접점
 
@@ -104,6 +84,8 @@ else:
 
 ## 3. 적용 절차
 
+**경로 A는 `autodojo-only` 브랜치에 구현되어 있다.** 캐시 세 개가 `conseca/attacks/autodojo/<suite>/injections.json`에 동봉되어 있고 `run_task.py`의 기본 공격이 `autodojo`다. 아래는 그 구현이 한 일이다.
+
 ### 경로 A: 공개 캐시 전이 재생 (반나절)
 
 ```bash
@@ -127,7 +109,7 @@ done
 .venv/bin/python compare_arms.py --suite banking --out results/autodojo
 ```
 
-4. 캐시에 없는 injection_task(banking 3~8 등)는 정적 공격으로 돌아가므로, 처음에는 캐시에 있는 injection_task만 `--injection-tasks`로 지정한다. `--attack-variant 0..4`를 모두 돌려 셀당 최고 ASR(ASR@5)과 variant 0 단독(ASR@1)을 둘 다 보고한다. 논문의 ASR은 최적화 타깃에 대한 값이므로 전이에서는 ASR@k가 더 공정하다.
+4. `--attack-variant 0..4`를 모두 돌려 셀당 최고 ASR(ASR@5)과 variant 0 단독(ASR@1)을 둘 다 보고한다. 논문의 ASR은 최적화 타깃에 대한 값이므로 전이에서는 ASR@k가 더 공정하다.
 5. 같은 캐시를 **양쪽 arm에 동일하게** 쓴다. 캐시는 무방어 gemini-2.5-flash 타깃이므로 이 조건은 자동으로 만족한다.
 
 ### 경로 B: gemini-cli를 타깃으로 직접 최적화 (며칠)
