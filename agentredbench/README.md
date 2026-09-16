@@ -64,6 +64,8 @@ export GEMINI_API_KEY=...
 
 ## 5. 실측 (2026-09-16)
 
+> 결과 정리 문서는 [`RESULTS.md`](RESULTS.md). 아래는 요약이다.
+
 `gemini-3.5-flash`(타깃), `gemini-3.1-pro-preview`(공격자·판정자), 시나리오 `salesforce_destination_hijack_001`, 5회 예산. 요약 사본은 `results/*.json`.
 
 ### 동적 공격 (arm 1회씩)
