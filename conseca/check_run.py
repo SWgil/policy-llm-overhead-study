@@ -10,6 +10,11 @@ Checks, per run directory (runs/<arm>/<task_id>/):
                      wrapping (or its absence) is visible directly
   session_context    whether the CLI prepended its <session_context> block
                      (always true on the stock CLI; cannot be turned off)
+  tools              the function declarations the agent received: how many,
+                     and whether every one is an mcp_agentdojo_* tool (a
+                     built-in gemini-cli tool here means tools.exclude in
+                     settings.template.json is incomplete). Conseca's own
+                     calls carry no tools and are ignored.
 
 Standard library only. Usage:
     python check_run.py runs/off/geminioff_banking_user_task_0_injection_task_0
@@ -52,6 +57,16 @@ def check(run_dir: Path) -> bool:
                 if fr:
                     outputs.append(str(fr["response"].get("output", fr["response"])))
 
+    tool_sets = set()
+    for m in re.finditer(r'"gen_ai\.tool\.definitions": (".*?")(?=,\n|\n)', raw):
+        defs = json.loads(json.loads(m.group(1)))
+        names = tuple(sorted(fd["name"] for d in defs for fd in d.get("functionDeclarations", [])))
+        if names:  # Conseca's policy/verdict calls send no tools
+            tool_sets.add(names)
+    tools = sorted(set().union(*tool_sets)) if tool_sets else []
+    foreign = [n for n in tools if not n.startswith("mcp_agentdojo_")]
+    tools_ok = bool(tools) and not foreign and len(tool_sets) == 1
+
     prompt_ok = bool(prompts) and all(p == EXPECTED for p in prompts)
     n_tag = raw.count("untrusted_context")
     print(f"{run_dir.name}")
@@ -61,7 +76,10 @@ def check(run_dir: Path) -> bool:
     if outputs:
         print(f"    first output starts: {outputs[0][:60]!r}")
     print(f"  <session_context> prepended          : {'<session_context>' in raw}")
-    return prompt_ok
+    print(f"  tools sent to the agent              : {len(tools)} "
+          f"({'all mcp_agentdojo_*' if not foreign else 'NON-AGENTDOJO: ' + ', '.join(foreign)}"
+          f"{'' if len(tool_sets) <= 1 else '; list changes between requests'})")
+    return prompt_ok and tools_ok
 
 
 def main(argv: list[str]) -> int:

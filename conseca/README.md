@@ -48,7 +48,7 @@ SUITE=slack ./run_pilot.sh --pilot
 | `compare_arms.py` | **분석.** `runs/`를 읽어 arm별 집계표와 태스크별 on/off 짝 비교표를 출력. CSV 저장 가능 |
 | `extract_runs.py` | **분석.** 런마다 프롬프트·점수·정책·주입된 툴 출력·판정·응답을 6개 JSON으로 분리 |
 | `parse_telemetry.py` | 텔레메트리 파일 1개 → 단계별 비용·판정 JSON. 위 둘이 내부에서 쓴다 |
-| `check_run.py` | **검증.** 런의 텔레메트리에서 모델이 실제로 받은 시스템 프롬프트와 툴 출력을 꺼내, 프롬프트가 `agentdojo_system.md`와 같은지와 `<untrusted_context>` 태그 유무를 확인 |
+| `check_run.py` | **검증.** 런의 텔레메트리에서 모델이 실제로 받은 시스템 프롬프트·툴 선언·툴 출력을 꺼내, 프롬프트가 `agentdojo_system.md`와 같은지, 툴이 `mcp_agentdojo_*`뿐인지, `<untrusted_context>` 태그 유무를 확인 |
 | `settings.template.json` | 태스크 워크스페이스에 들어가는 `.gemini/settings.json`. Conseca 토글, 내장 툴 제외, temperature 0 |
 | `agentdojo_system.md` | AgentDojo 기본 시스템 메시지 원문. `GEMINI_SYSTEM_MD`로 CLI 프롬프트를 통째로 대체 |
 | `patch_cli.py` | 선택. 설치된 CLI 번들에서 `<untrusted_context>` 래핑을 제거/복원([§7](#7-원본-agentdojo와의-정렬)) |
@@ -243,7 +243,8 @@ headline: utility(무주입) off 100% → on 0% (n=1), utility under attack 50% 
 
 **stock CLI로는 못 맞추는 것** — arm 간 비교에는 영향 없지만 논문 수치와 직접 비교할 때 염두에 둘 것:
 
-- 첫 user 메시지 앞에 `<session_context>`(오늘 날짜·OS·임시 경로)가 붙는다. AgentDojo 환경의 날짜(2024년 전후)와 어긋나 날짜 의존 태스크(travel, workspace)에 영향을 줄 수 있다.
+- 첫 user 메시지 앞에 `<session_context>` 블록이 붙는다. 내용은 "This is the Gemini CLI. We are setting up the context for our chat." + 오늘 날짜 + OS + 프로젝트 임시 디렉터리 경로이며, 시스템 프롬프트가 아니라 **첫 user 턴의 텍스트 파트**로 들어가므로 `GEMINI_SYSTEM_MD`로 못 없앤다. AgentDojo 환경의 날짜(2024년 전후)와 어긋나 날짜 의존 태스크(travel, workspace)에 영향을 줄 수 있다. 실측: workspace user_task_0에서 모델이 첫 호출에 `date: 2026-05-26`을 넣었다.
+- 툴 선언은 스위트 툴만 간다. 실측(텔레메트리 `gen_ai.tool.definitions`): banking 11, slack 11, travel 28, workspace 24로 AgentDojo v1.1.2의 툴 수와 같고 내장 툴은 0개. 단 gemini-cli가 모든 MCP 툴 스키마에 `wait_for_previous`(boolean, 선택) 인자를 추가한다. 원본에는 없는 인자다.
 - 모든 MCP 툴 결과가 `<untrusted_context>` 태그로 감싸인다. 태그만으로도 약한 완화 효과가 있을 수 있어 off arm의 ASR이 원본 "무방어"보다 낮을 수 있다. 원하면 `python patch_cli.py --apply`로 번들을 고칠 수 있다(`--revert` 복원, `--status` 확인). 이 경우 양쪽 arm에 같은 상태를 적용하고 보고서에 명시할 것. 패치 상태의 런은 `--out runs_patched`처럼 다른 디렉터리에 두어 stock 런과 섞이지 않게 한다.
 
   패치 전후를 실제 런으로 확인한 결과(banking user_task_0 + injection_task_0, off, 2026-09-16):
