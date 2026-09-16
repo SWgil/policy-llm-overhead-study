@@ -11,3 +11,6 @@ conseca/extracted/
 # Conseca bridge runtime files (conseca/bridge.sh)
 conseca/bridge.log
 conseca/.bridge.pid
+
+# run_pilot.sh output when run detached (e.g. ./run_pilot.sh --pilot > pilot.log)
+conseca/pilot.log
