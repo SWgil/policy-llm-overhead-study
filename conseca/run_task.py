@@ -145,7 +145,7 @@ def run_gemini(gemini: str, ws: Path, prompt: str, task_id: str, timeout: int, d
 
 def run_one(args, gemini: str, arm: str, suite: str, user_task: str, injection_task: str | None) -> dict:
     task_id = task_id_for(arm, suite, user_task, injection_task)
-    ws = Path(args.out) / arm / task_id
+    ws = Path(args.out).resolve() / arm / task_id  # absolute: gemini runs with cwd=ws
     result_path = ws / "result.json"
     if result_path.exists() and not args.force:
         print(f"[skip] {task_id} (cached)")

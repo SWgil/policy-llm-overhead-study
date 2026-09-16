@@ -11,3 +11,4 @@ conseca/extracted/
 # Conseca bridge runtime files (conseca/bridge.sh)
 conseca/bridge.log
 conseca/.bridge.pid
+conseca/runs_patched/
