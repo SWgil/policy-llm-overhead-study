@@ -314,6 +314,10 @@ def main() -> int:
     if args.out is None:
         args.out = str(HERE / "runs" / (f"autodojo-v{args.attack_variant}" if args.attack == "autodojo"
                                         else "important_instructions"))
+    # gemini runs with cwd = the task workspace, and GEMINI_TELEMETRY_OUTFILE is
+    # derived from --out; a relative --out would point it at a non-existent
+    # directory and gemini exits 1 without printing anything.
+    args.out = str(Path(args.out).resolve())
     n_users, injections = SUITES[args.suite]
     if args.attack == "autodojo":
         in_cache = cached_injection_tasks(args.attack_cache_dir, args.suite)
