@@ -9,3 +9,7 @@ __pycache__/
 conseca/.venv/
 conseca/mcp_results/
 conseca/extracted/
+
+# Conseca bridge runtime files (conseca/bridge.sh)
+conseca/bridge.log
+conseca/.bridge.pid

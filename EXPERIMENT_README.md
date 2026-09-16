@@ -4,6 +4,12 @@
 
 이 문서는 **더 좋은 GPU와 더 좋은 모델이 있는 환경으로 옮겨 다시 돌리는 법**에 초점을 맞춘다. 8GB GPU에서 돌린 파일럿 결과와 그때 밟은 함정들은 리포트 §6에 있다.
 
+> **코드 위치**: 이 문서가 말하는 `run_sweep.sh`, `analysis/`, `metrics/`는 이 저장소가 아니라 [progent-policy-overhead](https://github.com/SWgil/progent-policy-overhead)(Progent에 계측을 얹은 별도 저장소)에 있다. 아래 명령은 그 저장소를 `progent/`에 클론한 뒤 그 안에서 실행한다. Gemini만 있으면 되는 Conseca 트랙은 [conseca/README.md](conseca/README.md)를 볼 것.
+>
+> ```bash
+> git clone https://github.com/SWgil/progent-policy-overhead.git progent && cd progent
+> ```
+
 ---
 
 ## 1. 옮길 때 바꿔야 하는 것은 세 가지뿐이다
