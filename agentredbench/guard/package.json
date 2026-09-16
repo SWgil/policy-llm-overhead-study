@@ -1,0 +1,11 @@
+{
+  "name": "agentredbench-guard-defender",
+  "private": true,
+  "description": "Stand-in inline guard for the AgentRedBench-style harness: @stackone/defender (MiniLM-L6-v2 int8 ONNX, same team as the paper). onnxruntime-node is pinned to the version @huggingface/transformers bundles; a newer top-level copy fails to load its binding.",
+  "type": "module",
+  "dependencies": {
+    "@stackone/defender": "^1",
+    "@huggingface/transformers": "^3",
+    "onnxruntime-node": "1.21.0"
+  }
+}

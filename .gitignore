@@ -12,3 +12,8 @@ conseca/extracted/
 conseca/bridge.log
 conseca/.bridge.pid
 conseca/runs_patched/
+
+# AgentRedBench-style harness (agentredbench/)
+agentredbench/runs/
+agentredbench/guard/node_modules/
+agentredbench/guard/package-lock.json
