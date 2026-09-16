@@ -1,0 +1,3 @@
+arm,runs,utility,asr,asr_n,wall_s,agent_ms,conseca_ms,conseca_over_agent,agent_calls,conseca_calls,tool_calls,agent_tokens_in,agent_tokens_out,conseca_tokens_in,conseca_tokens_out,runs_with_429,fail_open
+off,4,0.5,0.0,4,9.322723925113678,7274.0,0.0,0.0,2.5,0.0,1.5,11161.5,160.5,0.0,0.0,0,0
+on,4,0.25,0.0,4,29.280019283294678,10459.5,17067.0,1.6317223576652804,4.0,4.0,3.0,16729.25,209.25,6364.75,1544.0,0,0

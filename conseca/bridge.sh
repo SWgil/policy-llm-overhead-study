@@ -12,12 +12,15 @@ PIDFILE=.bridge.pid
 LOG=bridge.log
 
 alive() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
+# Bridge processes by command line, never this script or the shell that ran it.
+bridge_pids() { pgrep -f "mcp_server[.]py --api-port" | grep -vxE "$$|$PPID" || true; }
 rest_up() { curl -s -o /dev/null "http://127.0.0.1:$API_PORT/docs"; }
 
 case "${1:-}" in
   start)
     if alive && rest_up; then echo "bridge already running (pid $(cat "$PIDFILE"))"; exit 0; fi
     [ -x .venv/bin/python ] || { echo "no .venv; run ./setup.sh first" >&2; exit 1; }
+    if rest_up; then echo "port $API_PORT is answering but no bridge pid is known; run ./bridge.sh stop first" >&2; exit 1; fi
     mkdir -p mcp_results
     # setsid puts the server and its workers in their own process group so stop can kill them all.
     if command -v setsid >/dev/null 2>&1; then
@@ -41,7 +44,15 @@ case "${1:-}" in
       pkill -P "$pid" 2>/dev/null || true
       rm -f "$PIDFILE"
     fi
-    pkill -f "agentdojo-mcp/mcp_server.py" 2>/dev/null || true
+    bridge_pids | xargs -r kill 2>/dev/null || true
+    # Wait until the old server has really gone: uvicorn shuts down gracefully
+    # and keeps the port for a few seconds, which makes the next start's
+    # readiness check pass against the dying process.
+    for i in $(seq 1 20); do
+      if [ -z "$(bridge_pids)" ] && ! rest_up; then break; fi
+      [ "$i" = 10 ] && { bridge_pids | xargs -r kill -9 2>/dev/null || true; }
+      sleep 1
+    done
     echo "bridge stopped" ;;
   status)
     if alive && rest_up; then echo "running (pid $(cat "$PIDFILE"))"; else echo "not running"; exit 1; fi ;;

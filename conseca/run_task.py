@@ -151,20 +151,26 @@ def run_one(args, gemini: str, arm: str, suite: str, user_task: str, injection_t
         print(f"[skip] {task_id} (cached)")
         return json.loads(result_path.read_text(encoding="utf-8"))
 
-    init = requests.post(
-        f"{args.rest_url}/init_task",
-        json={
-            "task_id": task_id,
-            "suite_name": suite,
-            "user_task_id": user_task,
-            "injection_task_id": injection_task,
-            # Name the model in the injection text, as upstream AgentDojo does
-            # (get_model_name_from_pipeline); the vendored bridge defaulted to
-            # the generic "the AI language model".
-            "attack_model_name": args.attack_model_name,
-        },
-        timeout=60,
-    )
+    init_body = {
+        "task_id": task_id,
+        "suite_name": suite,
+        "user_task_id": user_task,
+        "injection_task_id": injection_task,
+        # Name the model in the injection text, as upstream AgentDojo does
+        # (get_model_name_from_pipeline); the vendored bridge defaulted to
+        # the generic "the AI language model".
+        "attack_model_name": args.attack_model_name,
+    }
+    # A bridge that was just (re)started can drop the first connection while
+    # the previous server finishes shutting down; retry before giving up.
+    for attempt in range(3):
+        try:
+            init = requests.post(f"{args.rest_url}/init_task", json=init_body, timeout=60)
+            break
+        except requests.ConnectionError:
+            if attempt == 2:
+                raise
+            time.sleep(2 * (attempt + 1))
     init.raise_for_status()
     prompt = init.json()["user_task_prompt"]
     print(f"[run ] {task_id}: {prompt[:80]}")

@@ -29,7 +29,8 @@ done
 [ -x .venv/bin/python ] || { echo "no .venv; run ./setup.sh first" >&2; exit 1; }
 
 case "$scope" in
-  --smoke) sel=(--user-tasks user_task_0 --injection-tasks injection_task_0) ;;
+  --smoke) inj=injection_task_0; [ "$SUITE" = slack ] && inj=injection_task_1   # slack numbers from 1
+           sel=(--user-tasks user_task_0 --injection-tasks "$inj") ;;
   --pilot) sel=(--user-tasks user_task_0 user_task_1 user_task_2 user_task_3
                 --injection-tasks none injection_task_0 injection_task_1 injection_task_2) ;;
   --full)  sel=() ;;
