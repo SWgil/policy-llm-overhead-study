@@ -33,6 +33,20 @@
 
 캐시 경로 규칙: `variants/{suite}/{model}/{defense}/injections.json`. 저장소에 **banking·slack·travel × {openai/*, google/gemini-2.5-flash, anthropic/claude-haiku-4.5, deepseek/deepseek-v4-flash} × 10개 방어(no_defense 포함)** 조합이 커밋되어 있다. workspace 스위트는 없다.
 
+### "전이 캐시"란
+
+저자들이 **이미 만들어 커밋해 둔** `injections.json`을 말한다. 최적화 LLM(`google/gemini-3.1-pro-preview`)이 gemini-2.5-flash 무방어 에이전트를 타깃으로 6회 반복해 얻은 주입문이며, 다운로드해서 그대로 쓰면 된다. 별도 생성 작업은 없다. 다만 타깃이 gemini-2.5-flash였으므로 gemini-3.5-flash에 쓰면 "다른 모델용으로 최적화된 공격을 옮겨 쓰는" 전이 공격이 된다. 이 하네스의 모델을 타깃으로 새로 만드는 것이 아래 경로 B다.
+
+공개 캐시의 실제 범위(2026-09-16 확인, `google/gemini-2.5-flash/no_defense`):
+
+| 스위트 | 포함된 injection_task | 벡터 수 | 2.5-flash에서 기록된 최고 ASR |
+|---|---|---|---|
+| banking | 0, 1, 2 (전체 9개 중) | 4 | 벡터별 0.67~1.0 |
+| slack | 3개 | 5 | 0.4~0.73 |
+| travel | 최소 1개 (파일 일부만 확인) | 10 | 벡터별 0.0~1.0, 절반 이상 0 |
+
+즉 **스위트 전체가 아니라 injection_task 일부만** 최적화되어 있다. 캐시에 없는 injection_task는 `autodojo_attack.py`가 `injection_task.GOAL`을 `important_instructions` 템플릿으로 감싸 정적 공격과 같게 돌린다. 또 어떤 셀은 `variants[0]`이 `original`과 사실상 같은데, 이 경우도 정적 공격으로 후퇴한다. 전이 재생 결과를 볼 때 "캐시에 있던 셀"과 "후퇴한 셀"을 나눠 집계해야 한다.
+
 ### 공개 수치 (논문, GPT-4o-mini 집계)
 
 | 방어 | 정적 ASR | AutoDojo ASR |
@@ -113,7 +127,7 @@ done
 .venv/bin/python compare_arms.py --suite banking --out results/autodojo
 ```
 
-4. `--attack-variant 0..4`를 모두 돌려 셀당 최고 ASR(ASR@5)과 variant 0 단독(ASR@1)을 둘 다 보고한다. 논문의 ASR은 최적화 타깃에 대한 값이므로 전이에서는 ASR@k가 더 공정하다.
+4. 캐시에 없는 injection_task(banking 3~8 등)는 정적 공격으로 돌아가므로, 처음에는 캐시에 있는 injection_task만 `--injection-tasks`로 지정한다. `--attack-variant 0..4`를 모두 돌려 셀당 최고 ASR(ASR@5)과 variant 0 단독(ASR@1)을 둘 다 보고한다. 논문의 ASR은 최적화 타깃에 대한 값이므로 전이에서는 ASR@k가 더 공정하다.
 5. 같은 캐시를 **양쪽 arm에 동일하게** 쓴다. 캐시는 무방어 gemini-2.5-flash 타깃이므로 이 조건은 자동으로 만족한다.
 
 ### 경로 B: gemini-cli를 타깃으로 직접 최적화 (며칠)
