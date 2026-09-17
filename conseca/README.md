@@ -131,7 +131,7 @@ workspace 스위트는 캐시가 없어 `--suite` 선택지에서 뺐다.
 |---|---|---|
 | `--arm on\|off` | 필수 | `security.enableConseca` |
 | `--user-tasks`, `--injection-tasks` | 전체 | 부분집합. `none`은 무주입 |
-| `--model` | `gemini-2.5-flash` | 에이전트 모델. Conseca 자체는 CLI 내장 Flash 기본값으로 고정 |
+| `--model` | `gemini-3.1-flash-lite` | 에이전트 모델. `gemini-3.5-flash`도 확인됨. Conseca 자체는 CLI 내장 Flash 기본값으로 고정 |
 | `--pause` | 0 | 태스크 사이 대기(초) |
 | `--timeout` | 600 | 태스크당 gemini 프로세스 제한 |
 | `--attack` | `autodojo` | `autodojo` = 캐시 재생([§2-1](#2-1-공격-autodojo-캐시-재생)), `important_instructions` = AgentDojo 정적 공격 |
@@ -223,7 +223,7 @@ workspace 스위트는 캐시가 없어 `--suite` 선택지에서 뺐다.
 
 ### ④ 모델명 별칭
 
-이 API 키에서 `gemini-2.5-flash`는 서버가 **`gemini-3.5-flash`로 바꿔 실행**한다(텔레메트리 `model` 필드에 실제 모델). `gemini-2.5-pro`는 404. Conseca 내부 기본값도 같은 별칭을 탄다. 보고할 때는 텔레메트리의 실제 모델명을 쓸 것.
+이 API 키에서 `gemini-2.5-flash`와 `gemini-3-flash`는 서버가 **`gemini-3.5-flash`로 바꿔 실행**한다(텔레메트리 `model` 필드에 실제 모델). `gemini-2.5-flash-lite`·`gemini-2.5-pro`는 "신규 사용자에게 제공되지 않음"으로 거부된다(2026-09-16 확인). `gemini-3.1-flash-lite`(기본값)와 `gemini-3.5-flash`는 요청한 이름 그대로 서빙된다. Conseca 내부 기본값도 같은 별칭을 탄다. 보고할 때는 텔레메트리의 실제 모델명을 쓸 것.
 
 ### ⑤ 브리지의 숫자 결과는 gemini-cli가 툴 오류로 바꾼다
 

@@ -9,7 +9,7 @@
 #   ./run_pilot.sh --smoke --dry-run  # print the gemini commands only
 #
 # Env: SUITE (banking|slack|travel) ARMS ("off on") PAUSE (0; use 60 on a free-tier key)
-#      MODEL (gemini-2.5-flash) ATTACK (autodojo|important_instructions) VARIANT (0).
+#      MODEL (gemini-3.1-flash-lite) ATTACK (autodojo|important_instructions) VARIANT (0).
 #      Extra args go to run_task.py (e.g. --force, --include-unoptimized).
 # Results: runs/autodojo-v$VARIANT/ (or runs/important_instructions/); the
 # comparison and extraction at the end read the same directory.
@@ -21,7 +21,7 @@ cd "$(dirname "$0")"
 SUITE="${SUITE:-banking}"
 ARMS="${ARMS:-off on}"
 PAUSE="${PAUSE:-0}"
-MODEL="${MODEL:-gemini-2.5-flash}"
+MODEL="${MODEL:-gemini-3.1-flash-lite}"
 ATTACK="${ATTACK:-autodojo}"
 VARIANT="${VARIANT:-0}"
 if [ "$ATTACK" = autodojo ]; then RUNS="runs/autodojo-v$VARIANT"; else RUNS="runs/$ATTACK"; fi
