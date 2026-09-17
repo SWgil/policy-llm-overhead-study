@@ -6,8 +6,7 @@ failure mixes payload quality with the target's sampling variance. This script
 holds the payload fixed and re-runs only the target loop to estimate per-payload
 success probability. Attack-only: there is no guard / defense.
 
-    python replay_payload.py runs/<scenario>/<arm>/attempt_1.json --n 5 \
-        --target qwen3:27b --ollama-base-url http://<remote-host>:11434
+    python replay_payload.py runs/<scenario>/<arm>/attempt_1.json --n 5
 """
 
 from __future__ import annotations
@@ -29,8 +28,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("attempt_json", type=Path)
     ap.add_argument("--scenario", type=Path, default=HERE / "scenarios" / "salesforce_destination_hijack_001.yaml")
-    ap.add_argument("--target", default="qwen3:27b")
-    ap.add_argument("--ollama-base-url", default=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"))
+    ap.add_argument("--target", default=rs.DEFAULT_MODEL)
+    ap.add_argument("--ollama-base-url", default=rs.DEFAULT_OLLAMA_URL)
     ap.add_argument("--n", type=int, default=5)
     ap.add_argument("--max-turns", type=int, default=12)
     ap.add_argument("--out", type=Path, default=None)

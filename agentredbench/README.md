@@ -37,21 +37,23 @@
 
 ## 3. 실행
 
+기본값은 **원격 ollama 서버 `http://10.251.36.222:11434/v1`의 `qwen3.8:27b`** 로 타깃·공격자·판정자가 모두 설정돼 있다. **이 서버가 네트워크에서 닿는 환경에서 clone해 돌려야 한다** (개발 컨테이너에서는 사설 IP라 접근 불가).
+
 ```bash
 cd agentredbench
 uv venv .venv --python 3.12 && uv pip install --python .venv/bin/python google-genai openai pyyaml
-export OLLAMA_BASE_URL=http://<remote-host>:11434     # ollama가 뜬 원격 서버
 
-# 타깃 + 공격자(optimizer) 둘 다 원격 ollama 모델, 판정자는 공격자와 동일(기본값), 벤치 기준선 포함
-.venv/bin/python run_scenario.py --scenario scenarios/salesforce_destination_hijack_001.yaml \
-    --target <ollama-tag> --attacker <ollama-tag> --baseline
+# 서버 접근 확인 (qwen3.8:27b이 목록에 있어야 함)
+curl http://10.251.36.222:11434/api/tags
+
+# 기본값 그대로: 타깃=공격자=판정자=qwen3.8:27b, 방어 없음, 벤치 기준선 포함
+.venv/bin/python run_scenario.py --scenario scenarios/salesforce_destination_hijack_001.yaml --baseline
 
 # 성공한 페이로드를 고정해 타깃만 5번 재실행
-.venv/bin/python replay_payload.py runs/salesforce_destination_hijack_001/<target>__noguard/attempt_1.json --n 5 \
-    --target <ollama-tag>
+.venv/bin/python replay_payload.py runs/salesforce_destination_hijack_001/qwen3.8-27b__noguard/attempt_1.json --n 5
 ```
 
-서버에 어떤 태그가 떠 있는지는 `curl http://<remote-host>:11434/api/tags`로 확인한다. `--target`/`--attacker`에 그 태그를 그대로 넣으면 된다. `gemini-*` 이름을 넣으면 그 역할만 Gemini API로 돈다.
+주소·모델을 바꾸려면 `--ollama-base-url`, `--target`, `--attacker`(또는 환경변수 `OLLAMA_BASE_URL`, `OLLAMA_MODEL`)를 쓴다. 스킴 없는 주소(`10.251.36.222:11434`)도 자동으로 `http://…/v1`로 정규화된다. `gemini-*` 이름을 넣으면 그 역할만 Gemini API(`GEMINI_API_KEY`)로 돈다.
 
 ## 4. 시나리오: `salesforce_destination_hijack_001`
 
