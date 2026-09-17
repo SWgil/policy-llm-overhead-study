@@ -7,7 +7,7 @@
 #   ./run_pilot.sh --smoke --dry-run  # print the gemini commands only
 #
 # Env: SUITE (banking) ARMS ("off on") PAUSE (0; use 60 on a free-tier key)
-#      MODEL (gemini-2.5-flash). Extra args go to run_task.py (e.g. --force).
+#      MODEL (gemini-3.1-flash-lite). Extra args go to run_task.py (e.g. --force).
 # Starts the bridge if it is not running and stops it again at the end.
 # Finished tasks are cached in runs/; re-running resumes where it stopped.
 set -euo pipefail
@@ -16,7 +16,7 @@ cd "$(dirname "$0")"
 SUITE="${SUITE:-banking}"
 ARMS="${ARMS:-off on}"
 PAUSE="${PAUSE:-0}"
-MODEL="${MODEL:-gemini-2.5-flash}"
+MODEL="${MODEL:-gemini-3.1-flash-lite}"
 
 scope=""; extra=()
 for a in "$@"; do

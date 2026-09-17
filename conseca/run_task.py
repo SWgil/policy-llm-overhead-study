@@ -237,7 +237,7 @@ def main() -> int:
     ap.add_argument("--user-tasks", nargs="+", default=None, help="default: all in suite")
     ap.add_argument("--injection-tasks", nargs="+", default=None,
                     help="'none' = no injection; default: none + all in suite")
-    ap.add_argument("--model", default="gemini-2.5-flash",
+    ap.add_argument("--model", default="gemini-3.1-flash-lite",
                     help="agent model (Conseca itself is pinned to the CLI's flash default)")
     ap.add_argument("--out", default=str(HERE / "runs"))
     ap.add_argument("--rest-url", default="http://127.0.0.1:9000")

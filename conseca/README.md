@@ -89,7 +89,7 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 | `--pilot` | user_task_0~3 × {none, injection_task_0~2} | ~500 |
 | `--full` | 스위트 전체(무주입 포함) | banking ≈ 5,000 |
 
-환경변수: `SUITE`(banking/slack/travel/workspace), `ARMS`(`"off on"`), `PAUSE`(태스크 사이 대기 초, 무료 티어면 60), `MODEL`(에이전트 모델, 기본 `gemini-2.5-flash`). 나머지 인자는 `run_task.py`로 넘어간다(`--force`로 캐시 무시, `--dry-run`으로 명령만 출력).
+환경변수: `SUITE`(banking/slack/travel/workspace), `ARMS`(`"off on"`), `PAUSE`(태스크 사이 대기 초, 무료 티어면 60), `MODEL`(에이전트 모델, 기본 `gemini-3.1-flash-lite`). 나머지 인자는 `run_task.py`로 넘어간다(`--force`로 캐시 무시, `--dry-run`으로 명령만 출력).
 
 ### run_task.py 직접 호출
 
@@ -104,7 +104,7 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 |---|---|---|
 | `--arm on\|off` | 필수 | `security.enableConseca` |
 | `--user-tasks`, `--injection-tasks` | 전체 | 부분집합. `none`은 무주입 |
-| `--model` | `gemini-2.5-flash` | 에이전트 모델. Conseca 자체는 CLI 내장 Flash 기본값으로 고정 |
+| `--model` | `gemini-3.1-flash-lite` | 에이전트 모델. Conseca 자체는 CLI 내장 Flash 기본값으로 고정 |
 | `--pause` | 0 | 태스크 사이 대기(초) |
 | `--timeout` | 600 | 태스크당 gemini 프로세스 제한 |
 | `--attack-model-name` | gemini 모델이면 `Gemini` | 주입 텍스트의 `{model}` 자리에 들어갈 이름 |
@@ -197,7 +197,7 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 
 ### ④ 모델명 별칭
 
-이 API 키에서 `gemini-2.5-flash`는 서버가 **`gemini-3.5-flash`로 바꿔 실행**한다(텔레메트리 `model` 필드에 실제 모델). `gemini-2.5-pro`는 404. Conseca 내부 기본값도 같은 별칭을 탄다. 보고할 때는 텔레메트리의 실제 모델명을 쓸 것.
+기본 에이전트 모델은 `gemini-3.1-flash-lite`이고, 이 API 키에서는 별칭 없이 그 이름 그대로 실행된다(2026-09-17 확인). 반면 `gemini-2.5-flash`를 주면 서버가 **`gemini-3.5-flash`로 바꿔 실행**하고(텔레메트리 `model` 필드에 실제 모델), `gemini-2.5-pro`는 404다. Conseca 내부 기본값(Flash)도 별칭을 탄다. 보고할 때는 텔레메트리의 실제 모델명을 쓸 것. §6의 실측은 기본값이 `gemini-2.5-flash`(→ 3.5-flash)이던 때의 것이다.
 
 ### ⑤ 브리지의 숫자 결과는 gemini-cli가 툴 오류로 바꾼다
 
