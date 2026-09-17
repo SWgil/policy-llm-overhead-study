@@ -20,6 +20,7 @@ other name is treated as an Ollama tag and called through Ollama's
 OpenAI-compatible endpoint at OLLAMA_BASE_URL (default the remote server
 baked into DEFAULT_OLLAMA_URL, or --ollama-base-url). The judge defaults to the attacker model, matching the
 paper's "same model for attacker and judge".
+qwen <think>...</think> blocks are kept by default; pass --strip-think to remove them.
 
 Usage:
     # Defaults already point target + attacker at qwen3.8:27b on the remote
@@ -114,16 +115,23 @@ def normalize_ollama_url(url: str) -> str:
     return base
 
 
-def strip_think(text: str) -> str:
-    """Remove qwen-style <think>...</think> reasoning blocks from content."""
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+def strip_think(text: str, enabled: bool = True) -> str:
+    """Remove qwen-style <think>...</think> reasoning blocks from content.
+
+    When `enabled` is False the reasoning is kept verbatim (only surrounding
+    whitespace is trimmed) — useful for inspecting the model's thinking.
+    """
+    if enabled:
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
+    return text.strip()
 
 
 class LLM:
     """Thin wrapper over either Google GenAI or an Ollama OpenAI-compatible endpoint."""
 
-    def __init__(self, model: str, ollama_base_url: str):
+    def __init__(self, model: str, ollama_base_url: str, strip_think_blocks: bool = False):
         self.model = model
+        self.strip_think_blocks = strip_think_blocks
         self.backend = "gemini" if is_gemini(model) else "ollama"
         if self.backend == "gemini":
             from google import genai
@@ -166,7 +174,7 @@ class LLM:
                     meta = {"model": self.model, "backend": self.backend, "seconds": round(time.time() - t, 2),
                             "finish_reason": r.choices[0].finish_reason,
                             "usage": r.usage.model_dump(exclude_none=True) if r.usage else None}
-                out = extract_json(raw)
+                out = extract_json(raw, strip=self.strip_think_blocks)
                 if not isinstance(out, dict):
                     raise ValueError(f"expected JSON object, got {type(out).__name__}; raw={raw[:300]!r}")
                 missing = [k for k in required if not isinstance(out.get(k), str) or not out[k].strip()]
@@ -185,8 +193,8 @@ class LLM:
         raise RuntimeError(f"{self.model} failed after {retries} tries: {last_err}; last raw={raw[:500]!r}")
 
 
-def extract_json(text: str) -> Any:
-    text = strip_think(text).strip()
+def extract_json(text: str, strip: bool = True) -> Any:
+    text = strip_think(text, enabled=strip)
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -296,7 +304,7 @@ def _run_target_ollama(llm: LLM, sc: dict[str, Any], env: MockEnv, *, max_turns:
             usage_total["total"] += r.usage.total_tokens or 0
         msg = r.choices[0].message
         tool_calls = msg.tool_calls or []
-        content = strip_think(msg.content or "")
+        content = strip_think(msg.content or "", enabled=llm.strip_think_blocks)
         # Re-serialise the assistant turn for the next request.
         asst: dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
         if tool_calls:
@@ -444,6 +452,8 @@ def main() -> None:
                     help="Ollama server base URL for any non-gemini model (env OLLAMA_BASE_URL)")
     ap.add_argument("--attempts", type=int, default=None, help="override scenario attempt_budget")
     ap.add_argument("--max-turns", type=int, default=12)
+    ap.add_argument("--strip-think", action="store_true",
+                    help="remove qwen <think>...</think> blocks from model output (default: keep them)")
     ap.add_argument("--out", type=Path, default=HERE / "runs")
     ap.add_argument("--baseline", action="store_true", help="also run once with the benign seed (no payload) for utility")
     args = ap.parse_args()
@@ -454,9 +464,9 @@ def main() -> None:
     budget = args.attempts or int(sc["attempt_budget"])
     judge_model = args.judge or args.attacker
 
-    target_llm = LLM(args.target, args.ollama_base_url)
-    attacker_llm = LLM(args.attacker, args.ollama_base_url)
-    judge_llm = attacker_llm if judge_model == args.attacker else LLM(judge_model, args.ollama_base_url)
+    target_llm = LLM(args.target, args.ollama_base_url, strip_think_blocks=args.strip_think)
+    attacker_llm = LLM(args.attacker, args.ollama_base_url, strip_think_blocks=args.strip_think)
+    judge_llm = attacker_llm if judge_model == args.attacker else LLM(judge_model, args.ollama_base_url, strip_think_blocks=args.strip_think)
 
     def slug(m: str) -> str:
         return re.sub(r"[^A-Za-z0-9._-]", "-", m)
@@ -470,7 +480,7 @@ def main() -> None:
     summary: dict[str, Any] = {
         "scenario_id": sc["scenario_id"], "attack_type": sc["attack_type"], "target": args.target,
         "attacker": args.attacker, "judge": judge_model, "defense": "none",
-        "ollama_base_url": args.ollama_base_url, "attempt_budget": budget,
+        "strip_think": args.strip_think, "ollama_base_url": args.ollama_base_url, "attempt_budget": budget,
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "attempts": [],
         "deviations": [
             "attack-only harness: no inline guard / defense is applied to tool responses",

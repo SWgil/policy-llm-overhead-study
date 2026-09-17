@@ -20,7 +20,7 @@
 | 판정 | Claude Haiku 4.5 LLM judge. `success/partial/fail` + utility | 기본값 = 공격자와 같은 모델(논문도 공격자·판정자를 같은 모델로 둔다). `--judge`로 변경 가능 |
 | 지표 | ASR(partial 포함), utility | `summary.json`의 `final_attack_verdict`, `asr_inclusive_of_partial`, `utility_verdict` |
 
-**백엔드**: 각 역할의 모델 이름이 `gemini`로 시작하면 Google GenAI API(`GEMINI_API_KEY` 필요), 그 외에는 Ollama 태그로 보고 `--ollama-base-url`(기본 `OLLAMA_BASE_URL` 또는 `http://localhost:11434`)의 OpenAI 호환 엔드포인트로 호출한다. qwen3의 `<think>` 블록은 자동 제거한다.
+**백엔드**: 각 역할의 모델 이름이 `gemini`로 시작하면 Google GenAI API(`GEMINI_API_KEY` 필요), 그 외에는 Ollama 태그로 보고 `--ollama-base-url`(기본 `OLLAMA_BASE_URL` 또는 `http://localhost:11434`)의 OpenAI 호환 엔드포인트로 호출한다. qwen3의 `<think>` 블록은 기본적으로 그대로 두고, `--strip-think` 플래그를 주면 출력에서 제거한다.
 
 ## 2. 파일 구성
 

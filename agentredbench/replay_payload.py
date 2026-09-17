@@ -32,6 +32,8 @@ def main() -> None:
     ap.add_argument("--ollama-base-url", default=rs.DEFAULT_OLLAMA_URL)
     ap.add_argument("--n", type=int, default=5)
     ap.add_argument("--max-turns", type=int, default=12)
+    ap.add_argument("--strip-think", action="store_true",
+                    help="remove qwen <think>...</think> blocks from model output (default: keep them)")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
@@ -40,7 +42,7 @@ def main() -> None:
     sc = rs.load_scenario(args.scenario)
     sc["_target_model"] = args.target
     sc.setdefault("injection_target", {"note_id": "sf-note-redteam-001"})
-    target_llm = rs.LLM(args.target, args.ollama_base_url)
+    target_llm = rs.LLM(args.target, args.ollama_base_url, strip_think_blocks=args.strip_think)
     out_dir = args.out or args.attempt_json.parent / f"replay_{args.attempt_json.stem}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
