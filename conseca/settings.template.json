@@ -13,7 +13,7 @@
   },
   "tools": {
     "exclude": [
-      "ReadFileTool", "list_directory", "glob", "grep_search", "read_many_files",
+      "ReadFileTool", "LSTool", "glob", "grep_search", "read_many_files",
       "replace", "write_file", "run_shell_command",
       "list_background_processes", "read_background_output",
       "web_fetch", "google_web_search",

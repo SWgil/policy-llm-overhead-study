@@ -10,9 +10,12 @@ import re
 from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
 from agentdojo.agent_pipeline.tool_execution import tool_result_to_str
 from agentdojo.functions_runtime import FunctionsRuntime, FunctionCall
-from agentdojo.task_suite.load_suites import get_suite
+from agentdojo.task_suite.load_suites import get_suite, get_suites
 from agentdojo.task_suite.task_suite import TaskSuite
+from agentdojo.attacks.base_attacks import DEFAULT_MODEL_NAME, FixedJailbreakAttack
 from agentdojo.attacks.important_instructions_attacks import ImportantInstructionsAttack
+from agentdojo.models import MODEL_NAMES
+from agentdojo.types import text_content_block_from_string
 
 from mcp import ErrorData
 import uvicorn
@@ -30,15 +33,47 @@ data = {}
 
 RESULT_DIR = "./mcp_results"
 
+# Benchmark version used when the request does not name one. AgentDyn's paper
+# runs are logged as v1.2.2; its own suites (shopping/github/dailylife) are the
+# same objects under every version key, the four AgentDojo suites are not.
+DEFAULT_BENCHMARK_VERSION = "v1.2.2"
+
 
 class InitTaskRequest(BaseModel):
     task_id: str
     suite_name: str
     user_task_id: str
     injection_task_id: Optional[str] = None
-    # Substituted for {model} in the injection text. Upstream AgentDojo derives
-    # it from the pipeline (e.g. "Gemini"); the default keeps the generic name.
+    # Suite registry key (v1, v1.1, ..., v1.2.2). Only matters for the four
+    # AgentDojo suites, whose tasks differ between versions.
+    benchmark_version: str = DEFAULT_BENCHMARK_VERSION
+    # Model the agent runs on (e.g. "gemini-2.5-flash"). Used to pick the model
+    # name in the injection text the same way upstream does from the pipeline
+    # name (MODEL_NAMES: gemini-* -> "AI model developed by Google").
+    agent_model: Optional[str] = None
+    # Explicit override for the {model} placeholder in the injection text.
     attack_model_name: Optional[str] = None
+
+
+def attack_model_name_for(agent_model: Optional[str]) -> str:
+    """Same lookup as agentdojo.attacks.base_attacks.get_model_name_from_pipeline,
+    on a bare model id instead of a pipeline; falls back to the generic name."""
+    if agent_model:
+        for full_name, prose_name in MODEL_NAMES.items():
+            if full_name in agent_model:
+                return prose_name
+    return DEFAULT_MODEL_NAME
+
+
+class BridgeImportantInstructionsAttack(ImportantInstructionsAttack):
+    """ImportantInstructionsAttack without a real pipeline: the bridge has no
+    AgentPipeline (the agent is gemini-cli), so the model name is passed in
+    directly instead of being read from `target_pipeline.name`."""
+
+    def __init__(self, task_suite: TaskSuite, model_name: str) -> None:
+        FixedJailbreakAttack.__init__(self, self._JB_STRING, task_suite, BasePipelineElement)
+        self.user_name = "Emma Johnson"
+        self.model_name = model_name
 
 
 class FinishTaskRequest(BaseModel):
@@ -49,18 +84,23 @@ class FinishTaskRequest(BaseModel):
 @rest_api.post("/init_task")
 def init_task_endpoint(request: InitTaskRequest):
     # Load the task suite on the server side
-    task_suite = get_suite("v1.1.2", request.suite_name)
+    suites = get_suites(request.benchmark_version)
+    if request.suite_name not in suites:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Suite '{request.suite_name}' not in benchmark version "
+                   f"'{request.benchmark_version}' (available: {sorted(suites)})")
+    task_suite = suites[request.suite_name]
 
     user_task = task_suite.get_user_task_by_id(request.user_task_id)
+    attack_model_name = request.attack_model_name or attack_model_name_for(request.agent_model)
     if request.injection_task_id is None:
         injection_task = None
         task_injections = {}
     else:
         injection_task = task_suite.get_injection_task_by_id(
             request.injection_task_id)
-        attack = ImportantInstructionsAttack(task_suite, BasePipelineElement)
-        if request.attack_model_name:
-            attack.model_name = request.attack_model_name
+        attack = BridgeImportantInstructionsAttack(task_suite, attack_model_name)
         task_injections = attack.attack(user_task, injection_task)
     environment = task_suite.load_and_inject_default_environment(
         task_injections)
@@ -73,6 +113,8 @@ def init_task_endpoint(request: InitTaskRequest):
         "injection_task_id": request.injection_task_id,
         "user_task": user_task,
         "injection_task": injection_task,
+        "benchmark_version": request.benchmark_version,
+        "attack_model_name": attack_model_name if injection_task is not None else None,
         "environment": environment,
         "pre_environment": pre_environment,
         "runtime": runtime,
@@ -83,6 +125,8 @@ def init_task_endpoint(request: InitTaskRequest):
         "message": f"Successfully initialized task '{request.task_id}'",
         "tools_count": len(task_suite.tools),
         "user_task_prompt": user_task.PROMPT,
+        "benchmark_version": request.benchmark_version,
+        "attack_model_name": attack_model_name if injection_task is not None else None,
     }
 
 
@@ -92,9 +136,11 @@ def finish_task_endpoint(request: FinishTaskRequest):
     if task_data is None:
         raise HTTPException(
             status_code=404, detail=f"Task ID '{request.task_id}' not found")
+    # agentdojo >= 0.1.3x scores a list of content blocks, not a bare string.
+    model_output = [text_content_block_from_string(request.model_output or "")]
     utility = task_data["task_suite"]._check_task_result(
         task_data["user_task"],
-        request.model_output or "",
+        model_output,
         task_data["pre_environment"],
         task_data["environment"],
         task_data["functions_stack_trace"],
@@ -105,7 +151,7 @@ def finish_task_endpoint(request: FinishTaskRequest):
     else:
         security = task_data["task_suite"]._check_task_result(
             task_data["injection_task"],
-            request.model_output or "",
+            model_output,
             task_data["pre_environment"],
             task_data["environment"],
             task_data["functions_stack_trace"],
@@ -124,8 +170,10 @@ def finish_task_endpoint(request: FinishTaskRequest):
     with open(f"{RESULT_DIR}/{filename}", "w") as f:
         json.dump({
             "task_id": task_data["task_id"],
+            "benchmark_version": task_data["benchmark_version"],
             "user_task_id": task_data["user_task_id"],
             "injection_task_id": task_data["injection_task_id"],
+            "attack_model_name": task_data["attack_model_name"],
             "user_prompt": task_data["user_task"].PROMPT,
             "injection_goal": task_data["injection_task"].GOAL if task_data["injection_task"] else None,
             "functions_stack_trace": task_data["functions_stack_trace"],
@@ -280,7 +328,7 @@ def run_mcp_proxy(port: int):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="AgentDojo MCP"
+        description="AgentDyn / AgentDojo MCP bridge"
     )
     parser.add_argument(
         "--api-port",

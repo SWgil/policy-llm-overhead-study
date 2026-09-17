@@ -4,6 +4,7 @@ import warnings
 from itertools import repeat
 from multiprocessing import Pool
 from pathlib import Path
+from typing import Literal
 
 import click
 from dotenv import load_dotenv
@@ -25,13 +26,17 @@ def benchmark_suite(
     model: ModelsEnum,
     logdir: Path,
     force_rerun: bool,
+    benchmark_version: str,
     user_tasks: tuple[str, ...] = (),
     injection_tasks: tuple[str, ...] = (),
+    model_id: str | None = None,
     attack: str | None = None,
     defense: str | None = None,
+    tool_delimiter: str = "tool",
     system_message_name: str | None = None,
     system_message: str | None = None,
     live: Live | None = None,
+    tool_output_format: Literal["yaml", "json"] | None = None,
 ) -> SuiteResults:
     if not load_dotenv(".env"):
         warnings.warn("No .env file found")
@@ -47,7 +52,14 @@ def benchmark_suite(
 
     pipeline = AgentPipeline.from_config(
         PipelineConfig(
-            llm=model, defense=defense, system_message_name=system_message_name, system_message=system_message
+            llm=model,
+            model_id=model_id,
+            defense=defense,
+            tool_delimiter=tool_delimiter,
+            system_message_name=system_message_name,
+            system_message=system_message,
+            tool_output_format=tool_output_format,
+            suite_name=suite.name,
         )
     )
     with OutputLogger(str(logdir), live=live):
@@ -58,6 +70,7 @@ def benchmark_suite(
                 user_tasks=user_tasks if len(user_tasks) != 0 else None,
                 logdir=logdir,
                 force_rerun=force_rerun,
+                benchmark_version=benchmark_version,
             )
         else:
             attacker_ = load_attack(attack, suite, pipeline)
@@ -69,6 +82,7 @@ def benchmark_suite(
                 injection_tasks=injection_tasks if len(injection_tasks) != 0 else None,
                 logdir=logdir,
                 force_rerun=force_rerun,
+                benchmark_version=benchmark_version,
             )
     print(f"Finished benchmark for suite: '{suite.name}'")
 
@@ -100,10 +114,22 @@ def show_results(suite_name: str, results: SuiteResults, show_security_results: 
     help="The language model to benchmark. Defaults to `gpt-4o-2024-05-13`.",
 )
 @click.option(
+    "--model-id",
+    type=str,
+    default=None,
+    help="The model id for local models.",
+)
+@click.option(
     "--benchmark-version",
-    default="v1.2",
+    default="v1.2.2",
     type=str,
     help="The version of the benchmark to run. Defaults to `v1.2`.",
+)
+@click.option(
+    "--tool-delimiter",
+    type=str,
+    default="tool",
+    help="Which tool delimiter to use. Used for local models only.",
 )
 @click.option(
     "--logdir",
@@ -186,12 +212,14 @@ def show_results(suite_name: str, results: SuiteResults, show_security_results: 
 def main(
     suites: tuple[str, ...],
     model: ModelsEnum,
-    benchmark_version: str = "v1.2",
+    benchmark_version: str = "v1.2.2",
     logdir: Path = Path("./runs"),
     user_tasks: tuple[str, ...] = (),
     injection_tasks: tuple[str, ...] = (),
+    model_id: str | None = None,
     attack: str | None = None,
     defense: str | None = None,
+    tool_delimiter: str = "tool",
     system_message_name: str | None = None,
     system_message: str | None = None,
     max_workers: int = 1,
@@ -218,16 +246,36 @@ def main(
                 suite,
                 model,
                 logdir,
+                benchmark_version=benchmark_version,
                 user_tasks=user_tasks,
                 injection_tasks=injection_tasks,
+                model_id=model_id,
                 attack=attack,
                 defense=defense,
+                tool_delimiter=tool_delimiter,
                 system_message_name=system_message_name,
                 system_message=system_message,
                 force_rerun=force_rerun,
             )
+        combined_results = SuiteResults(utility_results={}, security_results={}, injection_tasks_utility_results={})
         for suite_name, result in results.items():
             show_results(suite_name, result, attack is not None)
+            for user_task, injection_task in result["utility_results"]:
+                new_user_task = suite_name + "_" + user_task
+                combined_results["utility_results"][(new_user_task, injection_task)] = result["utility_results"][
+                    (user_task, injection_task)
+                ]
+            for user_task, injection_task in result["security_results"]:
+                new_user_task = suite_name + "_" + user_task
+                combined_results["security_results"][(new_user_task, injection_task)] = result["security_results"][
+                    (user_task, injection_task)
+                ]
+            for injection_task in result["injection_tasks_utility_results"]:
+                new_injection_task = suite_name + "_" + injection_task
+                combined_results["injection_tasks_utility_results"][new_injection_task] = result[
+                    "injection_tasks_utility_results"
+                ][injection_task]
+        show_results("combined", combined_results, attack is not None)
         exit(0)
 
     with Pool(max_workers) as p:
@@ -237,8 +285,10 @@ def main(
             repeat(logdir),
             repeat(user_tasks),
             repeat(injection_tasks),
+            repeat(model_id),
             repeat(attack),
             repeat(defense),
+            repeat(tool_delimiter),
             repeat(system_message_name),
             repeat(system_message),
             repeat(force_rerun),

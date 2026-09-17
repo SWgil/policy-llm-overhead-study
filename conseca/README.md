@@ -1,6 +1,8 @@
-# Conseca on/off 오버헤드 하네스 — gemini-cli headless × AgentDojo
+# Conseca on/off 오버헤드 하네스 — gemini-cli headless × AgentDyn / AgentDojo
 
-Google `gemini-cli`에 내장된 Conseca(`security.enableConseca`)를 **켰을 때와 껐을 때의 비용(지연·호출 수·토큰)과 방어 효과(utility·ASR)** 를 AgentDojo로 측정한다. gemini-cli를 headless(`-p`)로 호출하고 AgentDojo 툴을 MCP 브리지로 꽂으며, 소스 패치 없이 **stock CLI 0.59.0 + 텔레메트리**만 쓴다.
+Google `gemini-cli`에 내장된 Conseca(`security.enableConseca`)를 **켰을 때와 껐을 때의 비용(지연·호출 수·토큰)과 방어 효과(utility·ASR)** 를 측정한다. gemini-cli를 headless(`-p`)로 호출하고 벤치마크 툴을 MCP 브리지로 꽂으며, 소스 패치 없이 **stock CLI 0.59.0 + 텔레메트리**만 쓴다.
+
+**이 브랜치는 AgentDyn용이다.** 브리지의 코어가 AgentDojo 0.1.29에서 [AgentDyn](https://github.com/SaFo-Lab/AgentDyn)(AgentDojo 0.1.35 포크)으로 바뀌어 `shopping` / `github` / `dailylife` 세 스위트를 추가로 돌릴 수 있고, 기존 4개 스위트(banking/slack/travel/workspace)도 그대로 돈다. main 브랜치와 달라진 점은 [§8](#8-agentdyn)에 모아 두었다.
 
 검증 환경: Windows 10(2026-09-09), Linux 컨테이너(2026-09-16). 둘 다 같은 태스크가 끝까지 돌았다([§6](#6-검증-실행-실측)).
 
@@ -14,7 +16,8 @@ cd policy-llm-overhead-study/conseca
 
 export GEMINI_API_KEY=...        # 또는 `gemini`를 한 번 대화형으로 열어 구글 계정 로그인
 ./setup.sh                       # gemini-cli 0.59.0 + .venv + AgentDojo 브리지, 인증 점검
-./run_pilot.sh --smoke           # 태스크 1개 × off/on. 파이프라인이 살아 있는지 확인 (~30 요청)
+./run_pilot.sh --smoke           # banking 태스크 1개 × off/on. 파이프라인이 살아 있는지 확인 (~30 요청)
+SUITE=shopping ./run_pilot.sh --smoke   # AgentDyn 스위트로 같은 확인
 ```
 
 `--smoke`가 끝나면 아래처럼 arm별 표와 태스크별 짝 비교표가 나온다. **off 행의 `conseca ms`가 0이고 on 행의 `fail-open`이 0이면 정상이다.**
@@ -30,6 +33,7 @@ export GEMINI_API_KEY=...        # 또는 `gemini`를 한 번 대화형으로 �
 ```bash
 PAUSE=60 ./run_pilot.sh --pilot   # 4 유저 × 4 주입 × 2 arm = 32런. 무료 티어 키면 PAUSE=60
 ./run_pilot.sh --full             # 스위트 전체(banking 160런 × 2 arm)
+SUITE=shopping ./run_pilot.sh --full    # AgentDyn shopping 전체(20 유저 × (무주입 + 9 주입) = 200런 × 2 arm)
 SUITE=slack ./run_pilot.sh --pilot
 ```
 
@@ -43,16 +47,17 @@ SUITE=slack ./run_pilot.sh --pilot
 |---|---|
 | `setup.sh` | 환경 세팅. gemini-cli 고정 버전 설치, `.venv` 생성, 브리지 설치, 인증·전역 메모리 점검. 재실행 안전 |
 | `run_pilot.sh` | `--smoke / --pilot / --full` 범위로 양쪽 arm을 돌리고 `compare_arms.py`까지 실행. 브리지를 알아서 띄우고 내린다 |
-| `bridge.sh` | AgentDojo MCP 브리지 `start / stop / status / log` |
+| `bridge.sh` | AgentDyn/AgentDojo MCP 브리지 `start / stop / status / log` |
 | `run_task.py` | 태스크 단위 실행기. 초기화 → 워크스페이스 생성 → gemini 실행 → 채점 → 텔레메트리 요약. 세밀한 제어가 필요할 때 직접 호출 |
 | `compare_arms.py` | **분석.** `runs/`를 읽어 arm별 집계표와 태스크별 on/off 짝 비교표를 출력. CSV 저장 가능 |
 | `extract_runs.py` | **분석.** 런마다 프롬프트·점수·정책·주입된 툴 출력·판정·응답을 6개 JSON으로 분리 |
 | `parse_telemetry.py` | 텔레메트리 파일 1개 → 단계별 비용·판정 JSON. 위 둘이 내부에서 쓴다 |
-| `check_run.py` | **검증.** 런의 텔레메트리에서 모델이 실제로 받은 시스템 프롬프트·툴 선언·툴 출력을 꺼내, 프롬프트가 `agentdojo_system.md`와 같은지, 툴이 `mcp_agentdojo_*`뿐인지, `<untrusted_context>` 태그 유무를 확인 |
+| `check_run.py` | **검증.** 런의 텔레메트리에서 모델이 실제로 받은 시스템 프롬프트·툴 선언·툴 출력을 꺼내, 프롬프트가 스위트에 맞는 `agentdyn_system.md` / `agentdojo_system.md`와 같은지, 툴이 `mcp_agentdojo_*`뿐인지, `<untrusted_context>` 태그 유무를 확인 |
 | `settings.template.json` | 태스크 워크스페이스에 들어가는 `.gemini/settings.json`. Conseca 토글, 내장 툴 제외, temperature 0 |
-| `agentdojo_system.md` | AgentDojo 기본 시스템 메시지 원문. `GEMINI_SYSTEM_MD`로 CLI 프롬프트를 통째로 대체 |
+| `agentdojo_system.md` | AgentDojo 기본 시스템 메시지 원문. banking/slack/travel/workspace 런에서 `GEMINI_SYSTEM_MD`로 CLI 프롬프트를 통째로 대체 |
+| `agentdyn_system.md` | AgentDyn 기본 시스템 메시지 원문(AgentDojo 것 + "Complete all tasks automatically without requesting user confirmation." 한 줄). shopping/github/dailylife 런에 사용 |
 | `patch_cli.py` | 선택. 설치된 CLI 번들에서 `<untrusted_context>` 래핑을 제거/복원([§7](#7-원본-agentdojo와의-정렬)) |
-| `agentdojo-mcp/` | AgentDojo v1.1.2를 MCP로 노출하는 브리지(동봉, 별도 클론 불필요) |
+| `agentdojo-mcp/` | AgentDyn(AgentDojo 0.1.35 포크, 7개 스위트)을 MCP로 노출하는 브리지(동봉, 별도 클론 불필요). 스위트 버전은 `/init_task`의 `benchmark_version`으로 고른다 |
 | `results/` | 검증 실행의 텔레메트리 요약(4 스위트 주입 + banking 무주입, 각 off/on)과 `compare_arms.py` CSV |
 
 실행 중 생기는 것(모두 git 제외): `runs/<arm>/<task_id>/`(result.json, telemetry.log, stdout/stderr, 사용된 settings.json), `mcp_results/`(브리지가 기록한 툴 호출·채점), `extracted/`, `bridge.log`.
@@ -72,7 +77,8 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
      └── parse_telemetry ──▶ agent_ms / conseca_ms / verdicts / 429 / fail-open
 ```
 
-- **프롬프트**: 시스템 프롬프트는 `agentdojo_system.md`로 대체, 내장 툴은 모두 제외, temperature 0. 원본 벤치마크와의 차이는 [§7](#7-원본-agentdojo와의-정렬).
+- **프롬프트**: 시스템 프롬프트는 스위트에 따라 `agentdyn_system.md`(AgentDyn) 또는 `agentdojo_system.md`(AgentDojo)로 대체, 내장 툴은 모두 제외, temperature 0. 원본 벤치마크와의 차이는 [§7](#7-원본-agentdojo와의-정렬).
+- **주입 텍스트의 모델명**: 브리지가 `--model`을 upstream의 `MODEL_NAMES` 표로 바꿔 넣는다(gemini-* → "AI model developed by Google", AgentDyn 논문의 Gemini 로그와 같은 문구). `--attack-model-name`으로 덮어쓸 수 있다.
 - **툴**: gemini-cli는 MCP 툴을 `mcp_agentdojo_<name>`으로 등록한다. 브리지는 HTTP 헤더 `task_id`로 태스크 환경을 구분한다.
 - **Conseca**: 프롬프트당 정책 생성 1회, 툴 호출당 판정 1회. 둘 다 CLI 기본 Flash. `--approval-mode yolo`에서도 실행되며 deny면 툴이 실행되지 않는다.
 - **계측**: 텔레메트리의 `api_response` 이벤트가 호출마다 `role`(`main`=에이전트, `subagent`=Conseca)과 `prompt_id`(`conseca-policy-generation` / `conseca-policy-enforcement`)를 구분해 준다.
@@ -87,9 +93,9 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 |---|---|---|
 | `--smoke` | user_task_0 × 스위트의 첫 injection 태스크(slack은 injection_task_1) | ~30 |
 | `--pilot` | user_task_0~3 × {none, injection_task_0~2} | ~500 |
-| `--full` | 스위트 전체(무주입 포함) | banking ≈ 5,000 |
+| `--full` | 스위트 전체(무주입 포함) | banking ≈ 5,000. AgentDyn은 스위트당 200~220런 × 2 arm이고 태스크가 길어 요청 수는 더 많다 |
 
-환경변수: `SUITE`(banking/slack/travel/workspace), `ARMS`(`"off on"`), `PAUSE`(태스크 사이 대기 초, 무료 티어면 60), `MODEL`(에이전트 모델, 기본 `gemini-3.1-flash-lite`). 나머지 인자는 `run_task.py`로 넘어간다(`--force`로 캐시 무시, `--dry-run`으로 명령만 출력).
+환경변수: `SUITE`(AgentDyn: shopping/github/dailylife, AgentDojo: banking/slack/travel/workspace), `ARMS`(`"off on"`), `PAUSE`(태스크 사이 대기 초, 무료 티어면 60), `MODEL`(에이전트 모델, 기본 `gemini-3.1-flash-lite`). 나머지 인자는 `run_task.py`로 넘어간다(`--force`로 캐시 무시, `--dry-run`으로 명령만 출력).
 
 ### run_task.py 직접 호출
 
@@ -107,8 +113,9 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 | `--model` | `gemini-3.1-flash-lite` | 에이전트 모델. Conseca 자체는 CLI 내장 Flash 기본값으로 고정 |
 | `--pause` | 0 | 태스크 사이 대기(초) |
 | `--timeout` | 600 | 태스크당 gemini 프로세스 제한 |
-| `--attack-model-name` | gemini 모델이면 `Gemini` | 주입 텍스트의 `{model}` 자리에 들어갈 이름 |
-| `--cli-prompt` | off | 정렬 이전 방식(CLI 자체 시스템 프롬프트 유지, AgentDojo 메시지를 `GEMINI.md`로) |
+| `--benchmark-version` | AgentDyn 스위트 `v1.2.2`, AgentDojo 스위트 `v1.1.2` | 브리지의 스위트 레지스트리 버전. AgentDyn 스위트는 어느 버전이든 같은 객체, AgentDojo 스위트는 버전마다 태스크가 다르다(예: workspace 주입 태스크 v1.1.2 6개, v1.2.2 14개) |
+| `--attack-model-name` | `--model`에서 유도(gemini-* → `AI model developed by Google`) | 주입 텍스트의 `{model}` 자리에 들어갈 이름 |
+| `--cli-prompt` | off | 정렬 이전 방식(CLI 자체 시스템 프롬프트 유지, 벤치마크 시스템 메시지를 `GEMINI.md`로) |
 | `--force`, `--dry-run` | | 캐시 무시 / 명령만 출력 |
 
 한 런의 로그는 `runs/<arm>/<task_id>/`에 있다. `stderr.txt`에 `[Conseca]`나 429가 보이면 [§5](#5-조용히-실패하는-함정)를 볼 것.
@@ -188,7 +195,7 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 
 - `tools.exclude`에 든 툴은 함수 선언, 시스템 프롬프트, Conseca 정책 생성 입력에서 모두 빠진다. `general.topicUpdateNarration: false`가 `update_topic` 툴과 관련 프롬프트를 함께 없앤다.
 - **`tools.core: []`는 쓰지 말 것.** 정책 엔진이 "목록 밖 전부 deny"를 추가해 MCP 툴까지 사라진다.
-- **내장 `read_file`은 클래스명 `"ReadFileTool"`로 뺀다.** `"read_file"`을 주면 banking의 `mcp_agentdojo_read_file`까지 빠진다.
+- **내장 `read_file`은 클래스명 `"ReadFileTool"`로, 내장 `list_directory`는 클래스명 `"LSTool"`로 뺀다.** bare 이름을 주면 같은 이름의 MCP 툴까지 빠진다. `"read_file"`은 banking의 `mcp_agentdojo_read_file`을, `"list_directory"`는 AgentDyn 세 스위트의 `mcp_agentdojo_list_directory`를 없앤다. AgentDyn 스위트로 처음 돌릴 때는 `check_run.py`로 툴 수(shopping 39, github 34, dailylife 27)를 한 번 확인할 것.
 - 내장 툴이 남아 있으면 모델이 `glob`·`list_directory`로 실제 파일시스템을 뒤지느라 턴을 쓰고 정책 입력이 3배 커진다(초기 검증: 정책 입력 10,572토큰 → 제외 후 3,561토큰).
 
 ### ③ 쿼터가 실험 규모를 정한다
@@ -239,7 +246,7 @@ headline: utility(무주입) off 100% → on 0% (n=1), utility under attack 50% 
 
 기본 옵션은 원본 AgentDojo 파이프라인(Google LLM 경로)에 맞춰져 있다. 실제 CLI에 가짜 엔드포인트를 물려 요청 본문으로 확인한 상태다.
 
-**맞춘 것**: 시스템 프롬프트(`agentdojo_system.md` 원문), 툴 집합(스위트 툴만), 샘플링(temperature 0, topP 1 — 에이전트만, Conseca 호출은 영향 없음), 툴 결과 포맷(`tool_result_to_str` YAML), 주입 텍스트의 모델명("to you, Gemini"), 채점 방식, 작업 디렉터리 트리 없음.
+**맞춘 것**: 시스템 프롬프트(스위트별 `agentdyn_system.md` / `agentdojo_system.md` 원문), 툴 집합(스위트 툴만), 샘플링(temperature 0, topP 1 — 에이전트만, Conseca 호출은 영향 없음), 툴 결과 포맷(`tool_result_to_str` YAML), 주입 텍스트의 모델명(upstream `MODEL_NAMES` 그대로, gemini-* → "to you, AI model developed by Google"), 채점 방식, 작업 디렉터리 트리 없음.
 
 **stock CLI로는 못 맞추는 것** — arm 간 비교에는 영향 없지만 논문 수치와 직접 비교할 때 염두에 둘 것:
 
@@ -264,3 +271,35 @@ headline: utility(무주입) off 100% → on 0% (n=1), utility under attack 50% 
 논문 표와 직접 비교하기보다, 같은 모델로 원본 `agentdojo` 벤치마크를 돌린 결과를 세 번째 arm으로 두고 하네스 자체의 격차를 따로 재는 편이 안전하다.
 
 정책/판정 모델을 바꾸거나 논문의 결정론적 강제기를 비교하려면 패치된 CLI([gemini-cli-conseca-overhead](https://github.com/SWgil/gemini-cli-conseca-overhead))를 빌드해 `run_task.py --gemini <path>`로 가리키면 된다. 함정 ①이 그대로 적용된다.
+
+## 8. AgentDyn
+
+[AgentDyn](https://arxiv.org/abs/2602.03117)은 AgentDojo 0.1.35를 포크해 `shopping` / `github` / `dailylife` 세 스위트를 얹은 벤치마크다. 패키지명이 그대로 `agentdojo`이고 스위트 레지스트리(`get_suite`)·공격(`important_instructions`)·채점(룰 기반 `utility()` / `security()`, LLM 판정 없음)이 같은 구조라서, 브리지의 코어만 바꾸면 하네스가 그대로 동작한다. 이 브랜치가 main과 다른 점:
+
+| 항목 | main (AgentDojo 0.1.29) | 이 브랜치 (AgentDyn = AgentDojo 0.1.35 포크) |
+|---|---|---|
+| 브리지 코어 `agentdojo-mcp/src/agentdojo` | upstream 0.1.29 | AgentDyn `src/agentdojo`(`defenses/` 제외). 4개 AgentDojo 스위트도 들어 있다 |
+| 스위트 | banking, slack, travel, workspace (v1.1.2 고정) | + shopping, github, dailylife. 버전은 `/init_task`의 `benchmark_version`(AgentDyn 스위트 v1.2.2, AgentDojo 스위트 v1.1.2 기본) |
+| 채점 입력 | 문자열 | 0.1.35의 content block 목록. 브리지가 `text_content_block_from_string`으로 감싼다 |
+| 툴 설명 | docstring 첫 문장만 | 0.1.35부터 long description까지 포함(예: `input_to_webpage`의 사용 예시). 4개 AgentDojo 스위트의 툴 선언도 그만큼 달라지므로 main의 런과 섞어 비교하지 말 것 |
+| 주입 텍스트 모델명 | `Gemini` | upstream `MODEL_NAMES`대로 `AI model developed by Google`(AgentDyn 논문의 Gemini 로그와 동일). `--attack-model-name Gemini`로 되돌릴 수 있다 |
+| 시스템 프롬프트 | `agentdojo_system.md` | AgentDyn 스위트는 `agentdyn_system.md`(마지막에 "Complete all tasks automatically without requesting user confirmation." 추가) |
+| `tools.exclude` | `list_directory` | `LSTool`(§5-②) |
+
+**AgentDyn 스위트 크기** (패키지에 등록된 것 = 논문의 560 케이스):
+
+| 스위트 | 유저 태스크 | 주입 태스크 | 툴 | `--full` 런 수(arm당) |
+|---|---|---|---|---|
+| shopping | 20 | injection_task_0~8 (9) | 39 | 200 |
+| github | 20 | injection_task_0~8 (9) | 34 | 200 |
+| dailylife | 20 | injection_task_0~9 (10) | 27 | 220 |
+
+**읽을 때 염두에 둘 점**
+
+- AgentDyn 태스크는 OTP·로그인 안내 같은 "도움이 되는 제3자 지시"를 툴 출력(이메일·웹페이지)에서 읽어야 끝난다. Conseca 정책이 이 흐름을 막거나 `ask_user`로 올리면(headless에서는 deny와 같다, §6) utility가 떨어지는데, 그것이 이 벤치마크가 재려는 over-defense다.
+- 논문에서 Gemini 2.5 Flash는 무방어 benign utility가 13% 수준으로 낮다. off arm의 성공 태스크 수가 적으면 짝 비교의 분모가 작아진다.
+- 논문 로그 기준 Gemini 2.5 Flash의 툴 호출은 주입 런 평균 2~3회, 최대 15회다. on arm은 호출마다 판정이 붙으므로 `--timeout`을 넉넉히 두고, 무료 티어면 `PAUSE=60`.
+- 툴이 27~39개이고 설명이 길어져 Conseca 정책 생성 입력이 AgentDojo 스위트보다 크다. `extracted/<arm>/<task>/policy.json`과 텔레메트리의 `conseca_generate` 토큰으로 확인한다.
+- 날짜 의존 툴(`get_current_day`, 환경 기준 2024-05-19)이 있고 `<session_context>`의 오늘 날짜는 여전히 첫 user 턴에 붙는다(§7).
+
+AgentDyn 논문 `runs/`의 원본 로그(파이프라인 `google_gemini-2.5-flash`)와 직접 비교하려면 upstream 파이프라인의 `google` provider(Vertex AI)로 돌린 결과라는 점, 그리고 §7의 stock CLI 차이를 감안해야 한다.

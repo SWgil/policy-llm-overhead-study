@@ -1,12 +1,13 @@
 import json
+from json import JSONDecodeError
 import logging
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
 
 from cohere.core.api_error import ApiError
-from google.api_core.exceptions import InternalServerError
-from openai import BadRequestError
+from google.genai.errors import ServerError
+from openai import BadRequestError, UnprocessableEntityError
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from typing_extensions import Self, TypedDict
 
@@ -46,6 +47,7 @@ def run_task_with_injection_tasks(
     logdir: Path | None,
     force_rerun: bool,
     injection_tasks: Sequence[str] | None = None,
+    benchmark_version: str | None = None,
 ) -> tuple[dict[tuple[str, str], bool], dict[tuple[str, str], bool]]:
     """Runs the given user task with the given injection tasks (or all tasks if no injection
     task is provided) by injecting the environment by using the given attack.
@@ -85,7 +87,7 @@ def run_task_with_injection_tasks(
         if logdir is not None and agent_pipeline.name is not None:
             try:
                 task_result = load_task_results(
-                    agent_pipeline.name,
+                    agent_pipeline.name.replace("/", "_"),
                     suite.name,
                     user_task.ID,
                     attack_name=attack.name,
@@ -110,13 +112,18 @@ def run_task_with_injection_tasks(
                 injections=task_injections,
                 attack_type=attack.name,
                 pipeline_name=agent_pipeline.name,
+                benchmark_version=benchmark_version,
             ) as logger:
                 try:
                     utility, security = suite.run_task_with_pipeline(
                         agent_pipeline, user_task, injection_task, task_injections
                     )
                 except BadRequestError as e:
-                    if e.code == "context_length_exceeded" or e.param == "max_tokens":
+                    if (
+                        e.code == "context_length_exceeded"
+                        or e.param == "max_tokens"
+                        or "reduce the length of the messages." in repr(e)
+                    ):
                         logger.log_error(
                             f"Skipping task '{user_task.ID}' with '{injection_task.ID}' due to context_length_exceeded: {e}"
                         )
@@ -133,10 +140,14 @@ def run_task_with_injection_tasks(
                         security = True
                     else:
                         raise e
-                except InternalServerError as e:
+                except ServerError as e:
                     logger.log_error(
                         f"Skipping task '{user_task.ID}' with '{injection_task.ID}' because of internal server error: {e}"
                     )
+                    utility = False
+                    security = True
+                except JSONDecodeError as e:
+                    logger.log_error(f"Skipping task {user_task.ID} with '{injection_task.ID}' because of JSON decode error: {e}")
                     utility = False
                     security = True
 
@@ -160,6 +171,7 @@ def benchmark_suite_with_injections(
     user_tasks: Sequence[str] | None = None,
     injection_tasks: Sequence[str] | None = None,
     verbose: bool = True,
+    benchmark_version: str | None = None,
 ) -> SuiteResults:
     """Benchmark a suite with injections.
 
@@ -193,7 +205,9 @@ def benchmark_suite_with_injections(
     injection_tasks_utility_results = {}
     if not attack.is_dos_attack:
         for injection_task_id, injection_task in injection_tasks_to_run.items():
-            successful, _ = run_task_without_injection_tasks(suite, agent_pipeline, injection_task, logdir, force_rerun)
+            successful, _ = run_task_without_injection_tasks(
+                suite, agent_pipeline, injection_task, logdir, force_rerun, benchmark_version
+            )
             injection_tasks_utility_results[injection_task_id] = successful
 
         if not all(injection_tasks_utility_results.values()):
@@ -208,6 +222,7 @@ def benchmark_suite_with_injections(
             logdir,
             force_rerun,
             injection_tasks,
+            benchmark_version,
         )
         suite_utility_results.update(utility)
         suite_security_results.update(security)
@@ -225,6 +240,7 @@ def run_task_without_injection_tasks(
     task: BaseUserTask | BaseInjectionTask,
     logdir: Path | None,
     force_rerun: bool,
+    benchmark_version: str | None = None,
 ) -> tuple[bool, bool]:
     """Run a task without injections. Useful to benchmark the utility of a pipeline.
 
@@ -242,7 +258,7 @@ def run_task_without_injection_tasks(
     if logdir is not None and agent_pipeline.name is not None:
         try:
             task_result = load_task_results(
-                agent_pipeline.name,
+                agent_pipeline.name.replace("/", "_"),
                 suite.name,
                 task.ID,
                 attack_name="none",
@@ -266,11 +282,23 @@ def run_task_without_injection_tasks(
         injections={},
         attack_type="none",
         pipeline_name=agent_pipeline.name,
+        benchmark_version=benchmark_version,
     ) as logger:
         try:
             utility, security = suite.run_task_with_pipeline(agent_pipeline, task, injection_task=None, injections={})
         except BadRequestError as e:
-            if e.code == "context_length_exceeded" or e.param == "max_tokens":
+            if (
+                e.code == "context_length_exceeded"
+                or e.param == "max_tokens"
+                or "reduce the length of the messages." in repr(e)
+            ):
+                logger.log_error(f"Skipping task {task.ID} due to context_length_exceeded: {e}")
+                utility = False
+                security = True
+            else:
+                raise e
+        except UnprocessableEntityError as e:
+            if "max_new_tokens" in str(e):
                 logger.log_error(f"Skipping task {task.ID} due to context_length_exceeded: {e}")
                 utility = False
                 security = True
@@ -283,8 +311,12 @@ def run_task_without_injection_tasks(
                 security = True
             else:
                 raise e
-        except InternalServerError as e:
+        except ServerError as e:
             logger.log_error(f"Skipping task {task.ID} because of internal server error: {e}")
+            utility = False
+            security = True
+        except JSONDecodeError as e:
+            logger.log_error(f"Skipping task {task.ID} because of JSON decode error: {e}")
             utility = False
             security = True
         logger.set_contextarg("utility", utility)
@@ -299,6 +331,7 @@ def benchmark_suite_without_injections(
     logdir: Path | None,
     force_rerun: bool,
     user_tasks: Sequence[str] | None = None,
+    benchmark_version: str | None = None,
 ) -> SuiteResults:
     """Benchmark a suite without injections.
 
@@ -321,7 +354,9 @@ def benchmark_suite_without_injections(
         user_tasks_to_run = suite.user_tasks.values()
 
     for user_task in user_tasks_to_run:
-        utility, security = run_task_without_injection_tasks(suite, agent_pipeline, user_task, logdir, force_rerun)
+        utility, security = run_task_without_injection_tasks(
+            suite, agent_pipeline, user_task, logdir, force_rerun, benchmark_version
+        )
         suite_utility_results[(user_task.ID, "")] = utility
         suite_security_results[(user_task.ID, "")] = security
 
@@ -354,6 +389,24 @@ class TaskResults(BaseModel):
         return self
 
 
+def convert_old_messages_format(messages: list[dict]) -> list[dict]:
+    """Convert messages from old format (string content) to new format (content blocks).
+
+    The new format was introduced with commit d67f9d141305e599ca2056f430f703d4021fd82a.
+    """
+    converted_messages = []
+    for message in messages:
+        message_copy = message.copy()
+        if message_copy["role"] == "assistant" and message_copy["content"] is not None:
+            message_copy["content"] = [{"type": "text", "content": message_copy["content"]}]
+        elif message_copy["role"] in ["user", "system"]:
+            message_copy["content"] = [{"type": "text", "content": message_copy["content"]}]
+        elif message_copy["role"] == "tool":
+            message_copy["content"] = [{"type": "text", "content": message_copy["content"]}]
+        converted_messages.append(message_copy)
+    return converted_messages
+
+
 def load_task_results(
     pipeline_name: str,
     suite_name: str,
@@ -366,6 +419,12 @@ def load_task_results(
     with path.open() as f:
         res_dict = json.load(f)
 
+    # Check if the result is in the old format (without content blocks)
+    # Old format didn't have agentdojo_package_version field
+    if "agentdojo_package_version" not in res_dict:
+        # Convert messages to the new format with content blocks
+        res_dict["messages"] = convert_old_messages_format(res_dict["messages"])
+
     return TaskResults(**res_dict)
 
 
@@ -374,7 +433,7 @@ def load_suite_results(
     pipeline_name: str,
     attack_name: str,
     logdir=Path("../runs"),
-    benchmark_version: str = "v1.2",
+    benchmark_version: str = "v1.2.2",
 ) -> tuple[dict[tuple[str, str], TaskResults], dict[tuple[str, str], TaskResults]]:
     suite = get_suite(benchmark_version, suite_name)
     results_without_injections = {}

@@ -2,11 +2,16 @@ from collections import defaultdict
 
 import agentdojo.default_suites.v1_1  # Register new tasks
 import agentdojo.default_suites.v1_1_1  # Register new tasks
-import agentdojo.default_suites.v1_2  # noqa: F401
+import agentdojo.default_suites.v1_2  # Register new tasks
+import agentdojo.default_suites.v1_2_1  # Register new tasks
+import agentdojo.default_suites.v1_2_2  # noqa: F401 # Register new tasks
 from agentdojo.default_suites.v1.banking import banking_task_suite
 from agentdojo.default_suites.v1.slack import slack_task_suite
 from agentdojo.default_suites.v1.travel import travel_task_suite
 from agentdojo.default_suites.v1.workspace import workspace_task_suite
+from agentdojo.default_suites.v1.shopping import shopping_task_suite
+from agentdojo.default_suites.v1.github import github_task_suite
+from agentdojo.default_suites.v1.dailylife import dailylife_task_suite
 from agentdojo.task_suite.task_suite import TaskSuite
 
 _V1_SUITES: dict[str, TaskSuite] = {
@@ -14,6 +19,9 @@ _V1_SUITES: dict[str, TaskSuite] = {
     "travel": travel_task_suite,
     "banking": banking_task_suite,
     "slack": slack_task_suite,
+    "shopping": shopping_task_suite,
+    "github": github_task_suite,
+    "dailylife": dailylife_task_suite,
 }
 
 _V1_1_SUITES: dict[str, TaskSuite] = {
@@ -21,6 +29,9 @@ _V1_1_SUITES: dict[str, TaskSuite] = {
     "travel": travel_task_suite.get_new_version((1, 1, 0)),
     "banking": banking_task_suite,
     "slack": slack_task_suite,
+    "shopping": shopping_task_suite,
+    "github": github_task_suite,
+    "dailylife": dailylife_task_suite,
 }
 
 _V1_1_1_SUITES: dict[str, TaskSuite] = {
@@ -28,6 +39,9 @@ _V1_1_1_SUITES: dict[str, TaskSuite] = {
     "travel": travel_task_suite.get_new_version((1, 1, 1)),
     "banking": banking_task_suite.get_new_version((1, 1, 1)),
     "slack": slack_task_suite.get_new_version((1, 1, 1)),
+    "shopping": shopping_task_suite,
+    "github": github_task_suite,
+    "dailylife": dailylife_task_suite,
 }
 
 _V1_1_2_SUITES: dict[str, TaskSuite] = {
@@ -35,6 +49,9 @@ _V1_1_2_SUITES: dict[str, TaskSuite] = {
     "travel": travel_task_suite.get_new_version((1, 1, 2)),
     "banking": banking_task_suite.get_new_version((1, 1, 1)),
     "slack": slack_task_suite.get_new_version((1, 1, 1)),
+    "shopping": shopping_task_suite,
+    "github": github_task_suite,
+    "dailylife": dailylife_task_suite,
 }
 
 _V1_2_SUITES: dict[str, TaskSuite] = {
@@ -42,6 +59,29 @@ _V1_2_SUITES: dict[str, TaskSuite] = {
     "travel": travel_task_suite.get_new_version((1, 2, 0)),
     "banking": banking_task_suite.get_new_version((1, 2, 0)),
     "slack": slack_task_suite.get_new_version((1, 2, 0)),
+    "shopping": shopping_task_suite,
+    "github": github_task_suite,
+    "dailylife": dailylife_task_suite,
+}
+
+_V1_2_1_SUITES: dict[str, TaskSuite] = {
+    "workspace": workspace_task_suite.get_new_version((1, 2, 1)),
+    "travel": travel_task_suite.get_new_version((1, 2, 0)),
+    "banking": banking_task_suite.get_new_version((1, 2, 0)),
+    "slack": slack_task_suite.get_new_version((1, 2, 0)),
+    "shopping": shopping_task_suite,
+    "github": github_task_suite,
+    "dailylife": dailylife_task_suite,
+}
+
+_V1_2_2_SUITES: dict[str, TaskSuite] = {
+    "workspace": workspace_task_suite.get_new_version((1, 2, 2)),
+    "travel": travel_task_suite.get_new_version((1, 2, 0)),
+    "banking": banking_task_suite.get_new_version((1, 2, 2)),
+    "slack": slack_task_suite.get_new_version((1, 2, 0)),
+    "shopping": shopping_task_suite,
+    "github": github_task_suite,
+    "dailylife": dailylife_task_suite,
 }
 
 _SUITES: defaultdict[str, dict[str, TaskSuite]] = defaultdict(
@@ -52,6 +92,8 @@ _SUITES: defaultdict[str, dict[str, TaskSuite]] = defaultdict(
         "v1.1.1": _V1_1_1_SUITES,
         "v1.1.2": _V1_1_2_SUITES,
         "v1.2": _V1_2_SUITES,
+        "v1.2.1": _V1_2_1_SUITES,
+        "v1.2.2": _V1_2_2_SUITES,
     },
 )
 

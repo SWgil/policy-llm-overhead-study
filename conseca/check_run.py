@@ -3,7 +3,9 @@
 
 Checks, per run directory (runs/<arm>/<task_id>/):
 
-  system prompt      every gen_ai.system_instructions equals agentdojo_system.md
+  system prompt      every gen_ai.system_instructions equals the benchmark's
+                     message: agentdyn_system.md for shopping/github/dailylife
+                     runs, agentdojo_system.md for banking/slack/travel/workspace
   untrusted_context  how many times the tag appears in the log (0 after
                      patch_cli.py --apply, 2 per tool call on the stock CLI)
   tool outputs       the functionResponse texts as sent to the model, so the
@@ -29,7 +31,15 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-EXPECTED = (HERE / "agentdojo_system.md").read_text(encoding="utf-8").strip()
+AGENTDYN_SUITES = ("shopping", "github", "dailylife")
+SUITE_RE = re.compile(r"_(banking|slack|travel|workspace|shopping|github|dailylife)_user_task_")
+
+
+def expected_prompt(run_dir: Path) -> tuple[str, str]:
+    """(file name, expected system prompt) for this run, picked from the suite in the task id."""
+    m = SUITE_RE.search(run_dir.name)
+    name = "agentdyn_system.md" if m and m.group(1) in AGENTDYN_SUITES else "agentdojo_system.md"
+    return name, (HERE / name).read_text(encoding="utf-8").strip()
 
 
 def check(run_dir: Path) -> bool:
@@ -67,10 +77,11 @@ def check(run_dir: Path) -> bool:
     foreign = [n for n in tools if not n.startswith("mcp_agentdojo_")]
     tools_ok = bool(tools) and not foreign and len(tool_sets) == 1
 
-    prompt_ok = bool(prompts) and all(p == EXPECTED for p in prompts)
+    expected_name, expected = expected_prompt(run_dir)
+    prompt_ok = bool(prompts) and all(p == expected for p in prompts)
     n_tag = raw.count("untrusted_context")
     print(f"{run_dir.name}")
-    print(f"  system prompt == agentdojo_system.md : {prompt_ok} ({len(prompts)} distinct)")
+    print(f"  system prompt == {expected_name:<19}: {prompt_ok} ({len(prompts)} distinct)")
     print(f"  untrusted_context occurrences        : {n_tag}")
     print(f"  tool outputs seen by the model       : {len(outputs)}")
     if outputs:

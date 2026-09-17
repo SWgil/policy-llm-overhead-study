@@ -6,7 +6,8 @@
 #   ./run_pilot.sh --full             # whole suite x 2 arms
 #   ./run_pilot.sh --smoke --dry-run  # print the gemini commands only
 #
-# Env: SUITE (banking) ARMS ("off on") PAUSE (0; use 60 on a free-tier key)
+# Env: SUITE (banking; AgentDyn: shopping/github/dailylife, AgentDojo: banking/slack/
+#      travel/workspace) ARMS ("off on") PAUSE (0; use 60 on a free-tier key)
 #      MODEL (gemini-3.1-flash-lite). Extra args go to run_task.py (e.g. --force).
 # Starts the bridge if it is not running and stops it again at the end.
 # Finished tasks are cached in runs/; re-running resumes where it stopped.
@@ -33,7 +34,7 @@ case "$scope" in
            sel=(--user-tasks user_task_0 --injection-tasks "$inj") ;;
   --pilot) sel=(--user-tasks user_task_0 user_task_1 user_task_2 user_task_3
                 --injection-tasks none injection_task_0 injection_task_1 injection_task_2) ;;
-  --full)  sel=() ;;
+  --full)  sel=() ;;   # AgentDyn suites: the paper's 20 user x 9-10 injection tasks + no-injection
 esac
 
 started=0

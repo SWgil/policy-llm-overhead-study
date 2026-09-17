@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run AgentDojo tasks through headless gemini-cli, with Conseca on or off.
+"""Run AgentDyn / AgentDojo tasks through headless gemini-cli, with Conseca on or off.
 
 One task = one gemini-cli process. The flow, per task:
 
@@ -8,8 +8,9 @@ One task = one gemini-cli process. The flow, per task:
      MCP server with the task id in a header, built-in tools excluded,
      temperature 0, no directory tree)
   3. gemini --approval-mode yolo -o json -p "<prompt>"   (cwd = workspace),
-     with GEMINI_SYSTEM_MD pointing at agentdojo_system.md so the system
-     instruction is AgentDojo's own system message instead of the CLI's
+     with GEMINI_SYSTEM_MD pointing at agentdyn_system.md (AgentDyn suites) or
+     agentdojo_system.md (AgentDojo suites) so the system instruction is the
+     benchmark's own system message instead of the CLI's
   4. POST /finish_task with the final response        -> utility, security
   5. parse the telemetry file                           -> agent vs Conseca cost
 
@@ -17,7 +18,11 @@ Results are cached per task in <out>/<arm>/<task_id>/result.json, so an
 interrupted sweep resumes where it stopped. Delete the directory to rerun.
 
 Examples:
-    # single task, Conseca on (what the feasibility check ran)
+    # single AgentDyn task, Conseca on
+    python run_task.py --arm on --suite shopping --user-tasks user_task_0 \
+        --injection-tasks injection_task_0
+
+    # single AgentDojo task, Conseca on (what the feasibility check ran)
     python run_task.py --arm on --suite banking --user-tasks user_task_0 \
         --injection-tasks injection_task_0
 
@@ -52,13 +57,37 @@ from parse_telemetry import summarise  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 
-# Suite shapes of AgentDojo v1.1.2.
+# Default task sets per suite: (number of user tasks, injection task ids).
+#
+# AgentDyn suites: everything the package registers, which is the paper's 560
+# test cases (20 user tasks per suite; shopping/github injection_task_0-8,
+# dailylife injection_task_0-9).
+#
+# AgentDojo suites: the v1.1.2 shapes, as on the main branch.
 SUITES = {
+    "shopping": (20, [f"injection_task_{i}" for i in range(9)]),
+    "github": (20, [f"injection_task_{i}" for i in range(9)]),
+    "dailylife": (20, [f"injection_task_{i}" for i in range(10)]),
     "banking": (16, [f"injection_task_{i}" for i in range(9)]),
     "slack": (21, [f"injection_task_{i}" for i in range(1, 6)]),
     "travel": (20, [f"injection_task_{i}" for i in range(7)]),
     "workspace": (40, [f"injection_task_{i}" for i in range(6)]),
 }
+AGENTDYN_SUITES = {"shopping", "github", "dailylife"}
+
+
+def default_benchmark_version(suite: str) -> str:
+    """AgentDyn's paper runs are logged as v1.2.2 (its suites are identical
+    under every version key); the AgentDojo suites stay on v1.1.2 so their
+    results remain comparable with the main branch."""
+    return "v1.2.2" if suite in AGENTDYN_SUITES else "v1.1.2"
+
+
+def system_prompt_for(suite: str) -> Path:
+    """The benchmark's default system message. AgentDyn's adds one line to
+    AgentDojo's: 'Complete all tasks automatically without requesting user
+    confirmation.'"""
+    return HERE / ("agentdyn_system.md" if suite in AGENTDYN_SUITES else "agentdojo_system.md")
 
 
 def find_gemini(explicit: str | None) -> str:
@@ -77,10 +106,8 @@ def task_id_for(arm: str, suite: str, user_task: str, injection_task: str | None
     return f"gemini{arm}_{suite}_{user_task}_{injection_task or 'noinjection'}"
 
 
-SYSTEM_PROMPT = HERE / "agentdojo_system.md"  # AgentDojo's default system message, verbatim
-
-
-def write_workspace(ws: Path, *, model: str, conseca: bool, mcp_url: str, cli_prompt: bool) -> None:
+def write_workspace(ws: Path, *, model: str, conseca: bool, mcp_url: str, cli_prompt: bool,
+                    system_prompt: Path) -> None:
     (ws / ".gemini").mkdir(parents=True, exist_ok=True)
     template = (HERE / "settings.template.json").read_text(encoding="utf-8")
     settings = (
@@ -92,11 +119,11 @@ def write_workspace(ws: Path, *, model: str, conseca: bool, mcp_url: str, cli_pr
     if cli_prompt:
         # Legacy layout: keep the CLI's own system prompt and feed the AgentDojo
         # message in as project context (lands in the first user message).
-        shutil.copyfile(SYSTEM_PROMPT, ws / "GEMINI.md")
+        shutil.copyfile(system_prompt, ws / "GEMINI.md")
 
 
 def run_gemini(gemini: str, ws: Path, prompt: str, task_id: str, timeout: int, dry_run: bool,
-               cli_prompt: bool) -> dict:
+               cli_prompt: bool, system_prompt: Path) -> dict:
     telemetry = ws / "telemetry.log"
     if telemetry.exists():
         telemetry.unlink()
@@ -114,9 +141,9 @@ def run_gemini(gemini: str, ws: Path, prompt: str, task_id: str, timeout: int, d
         }
     )
     if not cli_prompt:
-        # Replace the CLI's coding-agent system prompt with AgentDojo's. Global
+        # Replace the CLI's coding-agent system prompt with the benchmark's. Global
         # memory (~/.gemini/GEMINI.md) is still appended if present; keep it empty.
-        env["GEMINI_SYSTEM_MD"] = str(SYSTEM_PROMPT)
+        env["GEMINI_SYSTEM_MD"] = str(system_prompt)
     cmd = [gemini, "--approval-mode", "yolo", "-o", "json", "-p", prompt]
     if dry_run:
         print("DRY RUN, would execute in", ws)
@@ -151,14 +178,19 @@ def run_one(args, gemini: str, arm: str, suite: str, user_task: str, injection_t
         print(f"[skip] {task_id} (cached)")
         return json.loads(result_path.read_text(encoding="utf-8"))
 
+    benchmark_version = args.benchmark_version or default_benchmark_version(suite)
+    system_prompt = system_prompt_for(suite)
     init_body = {
         "task_id": task_id,
         "suite_name": suite,
         "user_task_id": user_task,
         "injection_task_id": injection_task,
-        # Name the model in the injection text, as upstream AgentDojo does
-        # (get_model_name_from_pipeline); the vendored bridge defaulted to
-        # the generic "the AI language model".
+        "benchmark_version": benchmark_version,
+        # The bridge names the model in the injection text from this, as
+        # upstream does from the pipeline name (gemini-* -> "AI model developed
+        # by Google", the wording in AgentDyn's own Gemini logs), unless
+        # --attack-model-name overrides it.
+        "agent_model": args.model,
         "attack_model_name": args.attack_model_name,
     }
     # A bridge that was just (re)started can drop the first connection while
@@ -172,12 +204,14 @@ def run_one(args, gemini: str, arm: str, suite: str, user_task: str, injection_t
                 raise
             time.sleep(2 * (attempt + 1))
     init.raise_for_status()
-    prompt = init.json()["user_task_prompt"]
+    init_out = init.json()
+    prompt = init_out["user_task_prompt"]
     print(f"[run ] {task_id}: {prompt[:80]}")
 
     write_workspace(ws, model=args.model, conseca=(arm == "on"), mcp_url=args.mcp_url,
-                    cli_prompt=args.cli_prompt)
-    out = run_gemini(gemini, ws, prompt, task_id, args.timeout, args.dry_run, args.cli_prompt)
+                    cli_prompt=args.cli_prompt, system_prompt=system_prompt)
+    out = run_gemini(gemini, ws, prompt, task_id, args.timeout, args.dry_run, args.cli_prompt,
+                     system_prompt)
     if args.dry_run:
         return {"task_id": task_id, "dry_run": True}
 
@@ -204,8 +238,11 @@ def run_one(args, gemini: str, arm: str, suite: str, user_task: str, injection_t
         "task_id": task_id,
         "arm": arm,
         "suite": suite,
+        "benchmark_version": benchmark_version,
         "user_task": user_task,
         "injection_task": injection_task,
+        "attack_model_name": init_out.get("attack_model_name"),
+        "system_prompt": system_prompt.name,
         "model": args.model,
         "utility": score.get("utility"),
         "security": score.get("security"),
@@ -233,7 +270,11 @@ def run_one(args, gemini: str, arm: str, suite: str, user_task: str, injection_t
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--arm", choices=["on", "off"], required=True, help="Conseca on or off")
-    ap.add_argument("--suite", choices=sorted(SUITES), required=True)
+    ap.add_argument("--suite", choices=sorted(SUITES), required=True,
+                    help="AgentDyn: shopping/github/dailylife; AgentDojo: banking/slack/travel/workspace")
+    ap.add_argument("--benchmark-version", default=None,
+                    help="suite registry version on the bridge; default v1.2.2 for AgentDyn suites, "
+                         "v1.1.2 for AgentDojo suites")
     ap.add_argument("--user-tasks", nargs="+", default=None, help="default: all in suite")
     ap.add_argument("--injection-tasks", nargs="+", default=None,
                     help="'none' = no injection; default: none + all in suite")
@@ -247,18 +288,17 @@ def main() -> int:
     ap.add_argument("--pause", type=float, default=0.0,
                     help="seconds to sleep between tasks (free-tier keys: try 60)")
     ap.add_argument("--attack-model-name", default=None,
-                    help="model name written into the injection text; default: 'Gemini' for gemini-* "
-                         "models, else AgentDojo's generic 'the AI language model'")
+                    help="model name written into the injection text; default: derived from --model "
+                         "by the bridge like upstream (gemini-* -> 'AI model developed by Google', "
+                         "unknown models -> 'the AI language model')")
     ap.add_argument("--cli-prompt", action="store_true",
-                    help="keep gemini-cli's own system prompt and pass the AgentDojo message as "
+                    help="keep gemini-cli's own system prompt and pass the benchmark's message as "
                          "GEMINI.md project context (pre-alignment behaviour)")
     ap.add_argument("--force", action="store_true", help="ignore cached results")
     ap.add_argument("--dry-run", action="store_true", help="init the task and print the command only")
     args = ap.parse_args()
 
     gemini = find_gemini(args.gemini)
-    if args.attack_model_name is None:
-        args.attack_model_name = "Gemini" if "gemini" in args.model.lower() else "the AI language model"
     n_users, injections = SUITES[args.suite]
     user_tasks = args.user_tasks or [f"user_task_{i}" for i in range(n_users)]
     injection_tasks = args.injection_tasks or ["none", *injections]

@@ -9,25 +9,23 @@ maintainers = [
     { name = "Edoardo Debenedetti", email = "edoardo.debenedetti@inf.ethz.ch" },
 ]
 name = "agentdojo"
-version = "0.1.29"
-description = "A Dynamic Environment to Evaluate Attacks and Defenses for LLM Agents"
+version = "0.1.35"
+description = "AgentDyn (AgentDojo 0.1.35 fork with the shopping/github/dailylife suites), packaged as the MCP bridge for the Conseca overhead harness"
 dependencies = [
     "openai>=1.59.7",
     "pydantic[email]>=2.7.1",
     "docstring-parser>=0.15",
     "tenacity>=8.2.3",
-    "langchain>=0.1.17",
     "typing-extensions>=4.11.0",
     "anthropic>=0.47.0",
     "cohere>=5.3.4",
     "pyyaml>=6.0.1",
     "click>=8.1.7",
-    "deepdiff>=7.0.1",
+    "deepdiff>=8.6.1",
     "rich>=13.7.1",
-    "vertexai>=1.49.0",
-    "openapi-pydantic>=0.5.0",
-    "jsonref>=1.1.0",
     "python-dotenv>=1.0.1",
+    "google-genai>=1.15.0",
+    "requests>=2.31",
     "fastmcp~=2.13.0",
     "fastapi>=0.120",
 ]

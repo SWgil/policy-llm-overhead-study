@@ -48,7 +48,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from parse_telemetry import iter_attribute_objects  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
-TASK_ID_RE = re.compile(r"^(\w+?)_(banking|slack|travel|workspace)_(user_task_\d+)_(injection_task_\d+|noinjection)$")
+TASK_ID_RE = re.compile(
+    r"^(\w+?)_(banking|slack|travel|workspace|shopping|github|dailylife)_(user_task_\d+)_(injection_task_\d+|noinjection)$"
+)
 INJECTION_MARKER = "<INFORMATION>"
 
 

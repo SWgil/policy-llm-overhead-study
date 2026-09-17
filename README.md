@@ -1,6 +1,6 @@
 # policy-llm-overhead-study
 
-Google `gemini-cli`에 내장된 IPI 방어 **Conseca**를 켰을 때와 껐을 때의 비용(지연·호출 수·토큰)과 방어 효과(utility·ASR)를 AgentDojo로 재는 하네스.
+Google `gemini-cli`에 내장된 IPI 방어 **Conseca**를 켰을 때와 껐을 때의 비용(지연·호출 수·토큰)과 방어 효과(utility·ASR)를 재는 하네스. 이 브랜치는 [AgentDyn](https://github.com/SaFo-Lab/AgentDyn)(shopping/github/dailylife) 스위트를 돌리는 버전이며, AgentDojo 4개 스위트도 함께 돈다(main 브랜치는 AgentDojo 전용).
 
 ## 바로 돌리기
 
@@ -11,6 +11,7 @@ cd conseca
 export GEMINI_API_KEY=...
 ./setup.sh                  # gemini-cli 0.59.0 + Python venv + AgentDojo 브리지
 ./run_pilot.sh --smoke      # 태스크 1개 × Conseca off/on, 비교표까지 출력
+SUITE=shopping ./run_pilot.sh --smoke   # AgentDyn 스위트
 ```
 
 전체 절차·분석 방법·함정은 [conseca/README.md](conseca/README.md).
@@ -19,5 +20,5 @@ export GEMINI_API_KEY=...
 
 | 경로 | 내용 |
 |---|---|
-| [`conseca/`](conseca/README.md) | 하네스 본체. stock gemini-cli를 headless로 호출해 AgentDojo에서 Conseca on/off 비용과 방어 효과를 잰다. 세팅·실행·분석 스크립트 포함 |
-| [`conseca/agentdojo-mcp/`](conseca/agentdojo-mcp/README.md) | AgentDojo v1.1.2를 MCP로 노출하는 브리지(동봉) |
+| [`conseca/`](conseca/README.md) | 하네스 본체. stock gemini-cli를 headless로 호출해 AgentDyn/AgentDojo에서 Conseca on/off 비용과 방어 효과를 잰다. 세팅·실행·분석 스크립트 포함. AgentDyn 관련 차이는 [§8](conseca/README.md#8-agentdyn) |
+| [`conseca/agentdojo-mcp/`](conseca/agentdojo-mcp/README.md) | AgentDyn(AgentDojo 0.1.35 포크)의 7개 스위트를 MCP로 노출하는 브리지(동봉) |
