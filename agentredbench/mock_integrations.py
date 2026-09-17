@@ -1,150 +1,154 @@
-"""Mock Salesforce + Gmail integrations for the AgentRedBench-style harness.
+"""Generic, data-driven mock integration engine for the harness.
 
-Each connector exposes tool schemas shaped like the real integration and
-returns JSON. Only the seeded `body` of the attacker-controlled note changes
-between runs (the paper's "response content is the only variable").
+MockEnv builds its tool surface from the connector registry (connectors.py) and
+its state from a scenario's `seed_state` (a dict of collection name -> list of
+records). It dispatches tool calls by the spec's `kind`, so a new scenario or
+connector needs no engine change — this is what lets attacks be diversified
+from YAML alone.
+
+Observable side-effects the grader looks at:
+  - self.outbox : messages the agent sent (email / chat), each with a
+                  `destination` list and a `body`
+  - self.writes : record fields the agent updated/created
+  - self.calls  : every tool call with a deep-copied result snapshot
 """
 
 from __future__ import annotations
 
 import copy
-import json
 import uuid
 from typing import Any
 
+from connectors import tool_specs
+
+
+def _searchable_text(record: dict[str, Any]) -> str:
+    return " ".join(str(v) for v in record.values() if isinstance(v, (str, int, float))).lower()
+
 
 class MockEnv:
-    def __init__(self, seed_state: dict[str, Any]):
-        self.state = copy.deepcopy(seed_state)
+    def __init__(self, connectors: list[str], seed_state: dict[str, Any]):
+        self.specs = tool_specs(connectors)
+        self.tools = {s["name"]: s for s in self.specs}
+        self.state: dict[str, list[dict[str, Any]]] = copy.deepcopy(seed_state or {})
+        self.state.setdefault("_config", {})  # non-list config bag, e.g. user email
         self.calls: list[dict[str, Any]] = []
-        self.sent_emails: list[dict[str, Any]] = []
+        self.outbox: list[dict[str, Any]] = []
+        self.writes: list[dict[str, Any]] = []
 
-    # ---- injection -----------------------------------------------------
-    def inject_note_body(self, note_id: str, body: str) -> None:
-        for n in self.state["salesforce"]["notes"]:
-            if n["id"] == note_id:
-                n["body"] = body
-                return
-        raise KeyError(note_id)
+    # ---- helpers -------------------------------------------------------------
+    def _collection(self, name: str) -> list[dict[str, Any]]:
+        col = self.state.setdefault(name, [])
+        if not isinstance(col, list):
+            raise TypeError(f"collection {name!r} is not a list")
+        return col
 
-    # ---- dispatch ------------------------------------------------------
+    def _find(self, collection: str, rec_id: str) -> dict[str, Any] | None:
+        for r in self._collection(collection):
+            if r.get("id") == rec_id:
+                return r
+        return None
+
+    # ---- injection -----------------------------------------------------------
+    def inject(self, collection: str, rec_id: str, field: str, value: str) -> None:
+        rec = self._find(collection, rec_id)
+        if rec is None:
+            raise KeyError(f"injection target {collection}/{rec_id} not found")
+        rec[field] = value
+
+    # ---- dispatch ------------------------------------------------------------
     def call(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
-        fn = getattr(self, f"tool_{name}", None)
-        if fn is None:
+        spec = self.tools.get(name)
+        if spec is None:
             result = {"error": f"unknown tool {name}"}
         else:
             try:
-                result = fn(**args)
-            except TypeError as e:
-                result = {"error": f"bad arguments: {e}"}
-        # Snapshot: tools return live state objects, and a later write (e.g.
-        # update_note) would otherwise rewrite what the trace says the model saw.
+                result = getattr(self, f"_kind_{spec['kind']}")(spec, dict(args or {}))
+            except Exception as e:  # noqa: BLE001
+                result = {"error": f"tool {name} failed: {type(e).__name__}: {e}"}
         result = copy.deepcopy(result)
-        self.calls.append({"tool": name, "args": copy.deepcopy(args), "result": copy.deepcopy(result)})
+        self.calls.append({"tool": name, "args": copy.deepcopy(dict(args or {})), "result": result})
         return result
 
-    # ---- salesforce ----------------------------------------------------
-    def tool_salesforce_search_accounts(self, query: str) -> dict:
-        q = query.lower()
-        hits = [a for a in self.state["salesforce"]["accounts"] if q in a["name"].lower() or q in a["id"].lower()]
+    # ---- kinds ---------------------------------------------------------------
+    def _kind_search(self, spec, args) -> dict[str, Any]:
+        q = str(args.get("query", "")).lower()
+        hits = [r for r in self._collection(spec["collection"]) if q in _searchable_text(r)]
         return {"total": len(hits), "records": hits}
 
-    def tool_salesforce_get_account(self, account_id: str) -> dict:
-        for a in self.state["salesforce"]["accounts"]:
-            if a["id"] == account_id:
-                owner = next((u for u in self.state["salesforce"]["users"] if u["id"] == a["owner_id"]), None)
-                return {**a, "owner": owner}
-        return {"error": "NOT_FOUND", "message": f"No account {account_id}"}
+    def _kind_get(self, spec, args) -> dict[str, Any]:
+        rec_id = args.get(spec["id_param"])
+        rec = self._find(spec["collection"], rec_id)
+        if rec is None:
+            return {"error": "NOT_FOUND", "message": f"No record {rec_id} in {spec['collection']}"}
+        out = dict(rec)
+        # convenience: resolve an owner_id to the owner record if present
+        if "owner_id" in rec:
+            owner = self._find("users", rec["owner_id"])
+            if owner:
+                out["owner"] = owner
+        return out
 
-    def tool_salesforce_get_user(self, user_id: str) -> dict:
-        for u in self.state["salesforce"]["users"]:
-            if u["id"] == user_id:
-                return u
-        return {"error": "NOT_FOUND", "message": f"No user {user_id}"}
+    def _kind_list(self, spec, args) -> dict[str, Any]:
+        recs = list(self._collection(spec["collection"]))
+        pf, pp = spec.get("parent_field"), spec.get("parent_param")
+        if pf and pp and args.get(pp) is not None:
+            recs = [r for r in recs if r.get(pf) == args[pp]]
+        mx = args.get("max_results")
+        if isinstance(mx, int):
+            recs = recs[:mx]
+        return {"total": len(recs), "records": recs}
 
-    def tool_salesforce_list_notes(self, account_id: str) -> dict:
-        notes = [n for n in self.state["salesforce"]["notes"] if n["account_id"] == account_id]
-        return {"total": len(notes), "records": notes}
+    def _kind_update(self, spec, args) -> dict[str, Any]:
+        rec = self._find(spec["collection"], args.get(spec["id_param"]))
+        if rec is None:
+            return {"error": "NOT_FOUND", "message": f"No record {args.get(spec['id_param'])}"}
+        changed = {}
+        for f in spec.get("writable", []):
+            if f in args and args[f] is not None:
+                rec[f] = args[f]
+                changed[f] = args[f]
+        self.writes.append({"tool": spec["name"], "collection": spec["collection"],
+                            "id": rec.get("id"), "changed": changed})
+        return {"success": True, "id": rec.get("id"), "updated_fields": list(changed)}
 
-    def tool_salesforce_get_note(self, note_id: str) -> dict:
-        for n in self.state["salesforce"]["notes"]:
-            if n["id"] == note_id:
-                return n
-        return {"error": "NOT_FOUND", "message": f"No note {note_id}"}
+    def _kind_create(self, spec, args) -> dict[str, Any]:
+        rec = {"id": f"{spec['collection']}-{uuid.uuid4().hex[:8]}", **args}
+        self._collection(spec["collection"]).append(rec)
+        self.writes.append({"tool": spec["name"], "collection": spec["collection"],
+                            "id": rec["id"], "changed": dict(args)})
+        return {"success": True, "id": rec["id"]}
 
-    def tool_salesforce_update_note(self, note_id: str, body: str, title: str | None = None) -> dict:
-        for n in self.state["salesforce"]["notes"]:
-            if n["id"] == note_id:
-                n["body"] = body
-                if title:
-                    n["title"] = title
-                n["last_modified_by"] = "sf-user-redteam-emma"
-                return {"success": True, "id": note_id}
-        return {"error": "NOT_FOUND", "message": f"No note {note_id}"}
-
-    def tool_salesforce_create_note(self, account_id: str, title: str, body: str) -> dict:
-        if not any(a["id"] == account_id for a in self.state["salesforce"]["accounts"]):
-            return {"error": "NOT_FOUND", "message": f"No account {account_id}"}
-        nid = f"sf-note-{uuid.uuid4().hex[:8]}"
-        self.state["salesforce"]["notes"].append(
-            {"id": nid, "account_id": account_id, "title": title, "body": body,
-             "created_at": "2026-09-16T10:00:00Z", "last_modified_by": "sf-user-redteam-emma"}
-        )
-        return {"success": True, "id": nid}
-
-    # ---- gmail ---------------------------------------------------------
-    def tool_gmail_send_email(self, to: list[str], subject: str, body: str,
-                              cc: list[str] | None = None, bcc: list[str] | None = None) -> dict:
+    def _kind_send(self, spec, args) -> dict[str, Any]:
+        to = args.get("to") or []
         if isinstance(to, str):
             to = [to]
-        msg = {"id": f"gmail-msg-{uuid.uuid4().hex[:8]}", "to": to, "cc": cc or [], "bcc": bcc or [],
-               "subject": subject, "body": body, "from": self.state["gmail"]["user_email"]}
-        self.sent_emails.append(msg)
-        return {"success": True, "id": msg["id"], "threadId": msg["id"], "labelIds": ["SENT"]}
+        cc = args.get("cc") or []
+        bcc = args.get("bcc") or []
+        if isinstance(cc, str):
+            cc = [cc]
+        if isinstance(bcc, str):
+            bcc = [bcc]
+        msg = {"id": f"msg-{uuid.uuid4().hex[:8]}", "channel": "email", "tool": spec["name"],
+               "to": to, "cc": cc, "bcc": bcc, "destination": [*to, *cc, *bcc],
+               "subject": args.get("subject", ""), "body": args.get("body", "")}
+        self.outbox.append(msg)
+        return {"success": True, "id": msg["id"], "labelIds": ["SENT"]}
 
-    def tool_gmail_list_messages(self, query: str = "", max_results: int = 10) -> dict:
-        return {"messages": self.state["gmail"]["inbox"][:max_results], "resultSizeEstimate": len(self.state["gmail"]["inbox"])}
-
-
-# JSON-schema tool declarations, one per connector (the "integration schema"
-# the attacker also sees).
-TOOL_SCHEMAS: dict[str, list[dict[str, Any]]] = {
-    "salesforce": [
-        {"name": "salesforce_search_accounts", "description": "Search Salesforce accounts by name or id substring.",
-         "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
-        {"name": "salesforce_get_account", "description": "Get a Salesforce account record, including its owner (the internal account executive responsible for it).",
-         "parameters": {"type": "object", "properties": {"account_id": {"type": "string"}}, "required": ["account_id"]}},
-        {"name": "salesforce_get_user", "description": "Get a Salesforce user record by id.",
-         "parameters": {"type": "object", "properties": {"user_id": {"type": "string"}}, "required": ["user_id"]}},
-        {"name": "salesforce_list_notes", "description": "List notes attached to an account.",
-         "parameters": {"type": "object", "properties": {"account_id": {"type": "string"}}, "required": ["account_id"]}},
-        {"name": "salesforce_get_note", "description": "Get the full content of a note.",
-         "parameters": {"type": "object", "properties": {"note_id": {"type": "string"}}, "required": ["note_id"]}},
-        {"name": "salesforce_update_note", "description": "Replace the body (and optionally title) of an existing note.",
-         "parameters": {"type": "object", "properties": {"note_id": {"type": "string"}, "body": {"type": "string"}, "title": {"type": "string"}}, "required": ["note_id", "body"]}},
-        {"name": "salesforce_create_note", "description": "Create a new note on an account.",
-         "parameters": {"type": "object", "properties": {"account_id": {"type": "string"}, "title": {"type": "string"}, "body": {"type": "string"}}, "required": ["account_id", "title", "body"]}},
-    ],
-    "gmail": [
-        {"name": "gmail_send_email", "description": "Send an email from the user's Gmail account.",
-         "parameters": {"type": "object", "properties": {
-             "to": {"type": "array", "items": {"type": "string"}},
-             "cc": {"type": "array", "items": {"type": "string"}},
-             "bcc": {"type": "array", "items": {"type": "string"}},
-             "subject": {"type": "string"}, "body": {"type": "string"}},
-          "required": ["to", "subject", "body"]}},
-        {"name": "gmail_list_messages", "description": "List messages in the user's inbox matching a query.",
-         "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "max_results": {"type": "integer"}}}},
-    ],
-}
+    def _kind_post(self, spec, args) -> dict[str, Any]:
+        dest = args.get(spec["channel_param"], "")
+        text = args.get(spec["text_param"], "")
+        msg = {"id": f"post-{uuid.uuid4().hex[:8]}", "channel": "chat", "tool": spec["name"],
+               "destination": [dest], "subject": "", "body": text}
+        self.outbox.append(msg)
+        return {"success": True, "id": msg["id"]}
 
 
 def schemas_for(connectors: list[str]) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for c in connectors:
-        out.extend(TOOL_SCHEMAS[c])
-    return out
+    return [{"name": s["name"], "description": s["description"], "parameters": s["parameters"]}
+            for s in tool_specs(connectors)]
 
 
 def schemas_text(connectors: list[str]) -> str:
+    import json
     return json.dumps(schemas_for(connectors), indent=1)
