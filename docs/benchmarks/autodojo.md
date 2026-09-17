@@ -45,7 +45,17 @@
 | slack | 1~5 (전체) | 5 | 일치 | 105 / 105 |
 | travel | 0~6 (전체) | 13 | 일치 | 140 / 140 |
 
-즉 세 스위트의 **모든 injection_task**가 들어 있다. 다만 banking의 일부 셀은 최적화기가 정적 래퍼를 이기지 못해 `variants[0]`이 `original`과 같고, 이 경우 `autodojo_attack.py`가 `important_instructions` 래퍼로 후퇴한다. 사용자 태스크가 읽는 벡터가 전부 이런 셀이면 그 런은 정적 공격과 동일하므로, 이 저장소의 `run_task.py`는 기본적으로 건너뛴다(`--include-unoptimized`로 포함). banking에서는 24쌍이 여기에 해당하고, 특히 `user_task_0 × injection_task_0`(기존 스모크 쌍)이 그렇다.
+즉 세 스위트의 **모든 injection_task**가 들어 있다.
+
+**캐시는 gemini-2.5-flash 하나에 맞춰 선택된 결과물이다.** 셀마다 시드 스타일 4종(static-bare = GOAL 원문, important-instructions-wrapper = AgentDojo 템플릿, rlhammer, topicattack)을 먼저 시험하고 LLM이 문장을 고쳐 가는데, 최종 `variants[0]`는 그 셀에서 **2.5-flash ASR이 가장 높았던 것**이다. 셀별로 이긴 스타일(`trajectory[].seed_style`)을 세면:
+
+| 스위트 | 셀 수 | static-bare | wrapper | topicattack | rlhammer | LLM 최적화 문장 |
+|---|---|---|---|---|---|---|
+| banking | 36 | 18 | 13 | 2 | 1 | 2 |
+| slack | 25 | 0 | 3 | 1 | 0 | 21 |
+| travel | 91 | 0 | 0 | 11 | 0 | 80 |
+
+banking은 2.5-flash가 GOAL 원문이나 원래 템플릿에도 넘어가서 최적화기가 더 가지 않은 셀이 대부분이고, AutoDojo 고유 문장은 slack·travel에 몰려 있다. 따라서 이 캐시를 3.x 모델에 쓰는 것은 "2.5-flash용 공격이 후속 모델에도 남는가"를 묻는 전이 실험이지 "AutoDojo가 3.x를 뚫는가"가 아니다. 후자는 경로 B(타깃별 최적화)로만 답할 수 있다. 전이 실험을 하더라도 banking보다 slack·travel이 의미 있고, `seed_style`로 LLM 문장만 거르는 필터를 두는 편이 해석이 깨끗하다. 다만 banking의 일부 셀은 최적화기가 정적 래퍼를 이기지 못해 `variants[0]`이 `original`과 같고, 이 경우 `autodojo_attack.py`가 `important_instructions` 래퍼로 후퇴한다. 사용자 태스크가 읽는 벡터가 전부 이런 셀이면 그 런은 정적 공격과 동일하므로, 이 저장소의 `run_task.py`는 기본적으로 건너뛴다(`--include-unoptimized`로 포함). banking에서는 24쌍이 여기에 해당하고, 특히 `user_task_0 × injection_task_0`(기존 스모크 쌍)이 그렇다.
 
 ## 2. 하네스 접점
 
