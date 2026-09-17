@@ -55,13 +55,21 @@ class InitTaskRequest(BaseModel):
     attack_model_name: Optional[str] = None
 
 
+# Every gemini-* entry in MODEL_NAMES maps to this; newer Gemini ids that the
+# table does not list yet (e.g. gemini-3.1-flash-lite) get the same wording.
+GOOGLE_MODEL_NAME = MODEL_NAMES["gemini-2.5-flash"]
+
+
 def attack_model_name_for(agent_model: Optional[str]) -> str:
     """Same lookup as agentdojo.attacks.base_attacks.get_model_name_from_pipeline,
-    on a bare model id instead of a pipeline; falls back to the generic name."""
+    on a bare model id instead of a pipeline. Unlisted gemini-* ids map to the
+    Google wording; anything else falls back to the generic name."""
     if agent_model:
         for full_name, prose_name in MODEL_NAMES.items():
             if full_name in agent_model:
                 return prose_name
+        if agent_model.lower().startswith("gemini"):
+            return GOOGLE_MODEL_NAME
     return DEFAULT_MODEL_NAME
 
 

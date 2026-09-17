@@ -78,7 +78,7 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 ```
 
 - **프롬프트**: 시스템 프롬프트는 스위트에 따라 `agentdyn_system.md`(AgentDyn) 또는 `agentdojo_system.md`(AgentDojo)로 대체, 내장 툴은 모두 제외, temperature 0. 원본 벤치마크와의 차이는 [§7](#7-원본-agentdojo와의-정렬).
-- **주입 텍스트의 모델명**: 브리지가 `--model`을 upstream의 `MODEL_NAMES` 표로 바꿔 넣는다(gemini-* → "AI model developed by Google", AgentDyn 논문의 Gemini 로그와 같은 문구). `--attack-model-name`으로 덮어쓸 수 있다.
+- **주입 텍스트의 모델명**: 브리지가 `--model`을 upstream의 `MODEL_NAMES` 표로 바꿔 넣는다(gemini-* → "AI model developed by Google", AgentDyn 논문의 Gemini 로그와 같은 문구). 표에 없는 새 Gemini id(기본값 `gemini-3.1-flash-lite` 포함)도 같은 문구를 쓰고, 그 밖의 모델은 "the AI language model"이다. `--attack-model-name`으로 덮어쓸 수 있다.
 - **툴**: gemini-cli는 MCP 툴을 `mcp_agentdojo_<name>`으로 등록한다. 브리지는 HTTP 헤더 `task_id`로 태스크 환경을 구분한다.
 - **Conseca**: 프롬프트당 정책 생성 1회, 툴 호출당 판정 1회. 둘 다 CLI 기본 Flash. `--approval-mode yolo`에서도 실행되며 deny면 툴이 실행되지 않는다.
 - **계측**: 텔레메트리의 `api_response` 이벤트가 호출마다 `role`(`main`=에이전트, `subagent`=Conseca)과 `prompt_id`(`conseca-policy-generation` / `conseca-policy-enforcement`)를 구분해 준다.
