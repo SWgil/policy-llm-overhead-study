@@ -14,6 +14,7 @@ export GEMINI_API_KEY=...
 SUITE=github ./run_pilot.sh --smoke     # 다른 스위트 (AgentDyn: shopping/github/dailylife, AgentDojo: banking/slack/travel/workspace)
 MODEL=gemini-2.5-flash ./run_pilot.sh --smoke   # 다른 모델. 결과는 runs/<model>/에 따로 남는다
 ./smoke_models.sh gemini-3.1-flash-lite gemini-2.5-flash        # 모델마다 smoke 1건씩 돌리고 모델 비교표 출력
+cd conseca && .venv/bin/python run_agentdyn_sweep.py --model gemini-3.1-flash-lite   # AgentDyn 3 스위트 × 모든 공격(DoS 제외) × off/on, 일일 쿼터 대기·재개
 .venv/bin/python results_table.py       # 모든 모델·스위트·arm 결과를 한 표로
 ```
 

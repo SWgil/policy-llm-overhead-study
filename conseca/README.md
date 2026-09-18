@@ -50,6 +50,7 @@ MODEL=gemini-2.5-flash ./run_pilot.sh --pilot   # 다른 에이전트 모델. �
 |---|---|
 | `setup.sh` | 환경 세팅. gemini-cli 고정 버전 설치, `.venv` 생성, 브리지 설치, 인증·전역 메모리 점검. 재실행 안전 |
 | `run_pilot.sh` | `--smoke / --pilot / --full` 범위로 양쪽 arm을 돌리고 `compare_arms.py`까지 실행. 브리지를 알아서 띄우고 내린다 |
+| `run_agentdyn_sweep.py` | **통합 실행.** 모델 하나를 받아 AgentDyn 세 스위트 × (무주입 + DoS를 뺀 모든 공격) × off/on을 돌린다. Gemini 일일 쿼터에 걸리면 그 런을 지우고 30분마다 쿼터를 확인해 재개한다([§3](#run_agentdyn_sweeppy-모델-하나로-agentdyn-전체)) |
 | `smoke_models.sh` | 모델 목록을 받아 모델마다 `run_pilot.sh --smoke`(태스크 1개 × off/on)를 돌리고 끝에 `results_table.py`로 모델 비교표를 찍는다. 기본 `SUITE=shopping`. 한 모델이 실패해도(404·쿼터) 나머지는 계속 돌고 끝에 실패 모델을 알려준다 |
 | `bridge.sh` | AgentDyn/AgentDojo MCP 브리지 `start / stop / status / log` |
 | `run_task.py` | 태스크 단위 실행기. 초기화 → 워크스페이스 생성 → gemini 실행 → 채점 → 텔레메트리 요약. 세밀한 제어가 필요할 때 직접 호출 |
@@ -100,6 +101,26 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 
 환경변수: `SUITE`(기본 `shopping`; AgentDyn: shopping/github/dailylife, AgentDojo: banking/slack/travel/workspace), `ARMS`(`"off on"`), `PAUSE`(태스크 사이 대기 초, 무료 티어면 60), `MODEL`(에이전트 모델, 기본 `gemini-3.1-flash-lite`; 값마다 `runs/<model>/`가 따로 생긴다). 나머지 인자는 `run_task.py`로 넘어간다(`--force`로 캐시 무시, `--dry-run`으로 명령만 출력).
 
+### run_agentdyn_sweep.py: 모델 하나로 AgentDyn 전체
+
+```bash
+.venv/bin/python run_agentdyn_sweep.py --model gemini-3.1-flash-lite          # 3 스위트 × 11 공격 × off/on
+.venv/bin/python run_agentdyn_sweep.py --model gemini-3.5-flash --arms off --pause 20
+.venv/bin/python run_agentdyn_sweep.py --model gemini-3.1-flash-lite --attacks important_instructions direct \
+    --user-tasks user_task_0 user_task_1 --injection-tasks injection_task_0    # 부분집합으로 먼저 확인
+.venv/bin/python run_agentdyn_sweep.py --model gemini-3.1-flash-lite --report-only   # 지금까지의 표만
+```
+
+| 동작 | 내용 |
+|---|---|
+| 공격 목록 | 브리지의 `GET /attacks`에서 받아 `is_dos_attack`인 것을 뺀다. 현재 11개: `direct`, `ignore_previous`, `injecagent`, `system_message`, `important_instructions`(+ `_no_user_name`, `_no_model_name`, `_no_names`, `_wrong_model_name`, `_wrong_user_name`), `tool_knowledge`. `--attacks`로 고르거나 `--include-dos` |
+| 순서 | arm → 스위트 → 무주입 런 1회(`none`) → 공격마다 그 스위트의 주입 태스크 전부. 잡마다 `run_task.py`를 부른다 |
+| 결과 위치 | `runs_agentdyn/<attack>/<model>/<arm>/<task_id>/`, 브리지 파일은 `mcp_results/<attack>/…`. 캐시되므로 같은 명령으로 이어 돈다. 로그는 `runs_agentdyn/sweep_<model>.log` |
+| 일일 쿼터 | `run_task.py`가 gemini-cli 출력에서 "exhausted your daily quota", `RESOURCE_EXHAUSTED`, 다른 모델로의 "Switching to … model"(쿼터 fallback)을 보면 **그 런의 디렉터리를 지우고 종료 코드 75**로 즉시 멈춘다. sweep은 `--quota-wait`(기본 1800 s)마다 모델에 아주 작은 요청을 보내 429가 아니면 같은 잡을 다시 부른다(끝난 태스크는 캐시로 건너뜀) |
+| 표 | 끝나면 공격 × arm 표(런 수, utility, ASR, 벽시계, Conseca ms, 429 런 수, fail-open). `none` 행의 utility가 benign utility |
+
+주의: `tool_knowledge`는 주입 태스크의 ground truth에 `placeholder_args`가 있어야 하는데 dailylife의 injection_task_0에는 없어서 그 조합은 브리지가 400으로 거절하고(`[fail]`) 나머지는 계속 돈다. 모델은 이 API 키에서 호출되는 이름이어야 한다. 2026-09-18 확인: `gemini-3.1-flash-lite`, `gemini-3.5-flash`는 되고 `gemini-2.5-pro`는 "no longer available to new users"(404)라 `gemini-3.1-pro-preview`를 써야 한다.
+
 ### run_task.py 직접 호출
 
 ```bash
@@ -117,6 +138,8 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 | `--pause` | 0 | 태스크 사이 대기(초) |
 | `--timeout` | 600 | 태스크당 gemini 프로세스 제한 |
 | `--benchmark-version` | AgentDyn 스위트 `v1.2.2`, AgentDojo 스위트 `v1.1.2` | 브리지의 스위트 레지스트리 버전. AgentDyn 스위트는 어느 버전이든 같은 객체, AgentDojo 스위트는 버전마다 태스크가 다르다(예: workspace 주입 태스크 v1.1.2 6개, v1.2.2 14개) |
+| `--attack` | `important_instructions` | 브리지 레지스트리의 공격 이름(`GET /attacks`). 주입 런에만 적용 |
+| `--run-label` | 없음 | 브리지 결과 파일을 `mcp_results/<label>/…`에 두게 한다. sweep이 공격 이름을 넘긴다 |
 | `--attack-model-name` | `--model`에서 유도(gemini-* → `AI model developed by Google`) | 주입 텍스트의 `{model}` 자리에 들어갈 이름 |
 | `--cli-prompt` | off | 정렬 이전 방식(CLI 자체 시스템 프롬프트 유지, 벤치마크 시스템 메시지를 `GEMINI.md`로) |
 | `--force`, `--dry-run` | | 캐시 무시 / 명령만 출력 |
@@ -227,6 +250,8 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 ### ③ 쿼터가 실험 규모를 정한다
 
 무료 티어 Gemini API 키는 분당 20회(`auth_type: gemini-api-key`, 텔레메트리에 찍힘). gemini-cli는 429를 내부에서 재시도하며 **재시도 대기가 지연에 섞인다**(`rate_limited_retries`로 걸러낼 것). on arm은 요청이 off의 2배쯤이다(smoke 실측: off 2, on 16). 무료 티어면 `PAUSE=60`으로 며칠에 나눠 돌리거나(캐시 덕에 이어 돌림) 구글 계정 로그인으로 바꾼다.
+
+**일일 쿼터**는 분당 제한과 달리 gemini-cli가 재시도로 넘기지 못한다. 프로세스가 "You have exhausted your daily quota on this model"로 죽거나, 더 나쁘게는 **다른 모델로 바꿔 계속 돌 수 있다**("Switching to the … model for the rest of this session"). `run_task.py`는 둘 다 잡아 그 런을 지우고 종료 코드 75로 멈추며, `run_agentdyn_sweep.py`가 쿼터가 돌아올 때까지 기다렸다 이어 돈다. `result.json`의 `served_model`이 `model`과 다르면 그 런은 의심할 것.
 
 ### ④ 모델명 별칭
 

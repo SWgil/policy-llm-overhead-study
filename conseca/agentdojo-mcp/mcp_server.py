@@ -12,8 +12,9 @@ from agentdojo.agent_pipeline.tool_execution import tool_result_to_str
 from agentdojo.functions_runtime import FunctionsRuntime, FunctionCall
 from agentdojo.task_suite.load_suites import get_suite, get_suites
 from agentdojo.task_suite.task_suite import TaskSuite
-from agentdojo.attacks.base_attacks import DEFAULT_MODEL_NAME, FixedJailbreakAttack
-from agentdojo.attacks.important_instructions_attacks import ImportantInstructionsAttack
+import agentdojo.attacks  # noqa: F401  -- registers the attacks
+from agentdojo.attacks.attack_registry import ATTACKS, load_attack
+from agentdojo.attacks.base_attacks import DEFAULT_MODEL_NAME
 from agentdojo.models import MODEL_NAMES
 from agentdojo.types import text_content_block_from_string
 
@@ -53,6 +54,12 @@ class InitTaskRequest(BaseModel):
     agent_model: Optional[str] = None
     # Explicit override for the {model} placeholder in the injection text.
     attack_model_name: Optional[str] = None
+    # Attack from agentdojo's registry (GET /attacks lists them). Ignored when
+    # injection_task_id is None.
+    attack: str = "important_instructions"
+    # Optional sub-directory of --results-dir for this task's result file, e.g.
+    # "<model>/<attack>", so sweeps over models/attacks do not overwrite each other.
+    run_label: Optional[str] = None
 
 
 # Every gemini-* entry in MODEL_NAMES maps to this; newer Gemini ids that the
@@ -73,15 +80,53 @@ def attack_model_name_for(agent_model: Optional[str]) -> str:
     return DEFAULT_MODEL_NAME
 
 
-class BridgeImportantInstructionsAttack(ImportantInstructionsAttack):
-    """ImportantInstructionsAttack without a real pipeline: the bridge has no
-    AgentPipeline (the agent is gemini-cli), so the model name is passed in
-    directly instead of being read from `target_pipeline.name`."""
+class _StubPipeline(BasePipelineElement):
+    """Stand-in for the agent pipeline. The bridge has no AgentPipeline (the agent
+    is gemini-cli); attacks only read `.name` to pick the model name in the
+    injection text, so the stub carries a name that maps to the wanted prose."""
 
-    def __init__(self, task_suite: TaskSuite, model_name: str) -> None:
-        FixedJailbreakAttack.__init__(self, self._JB_STRING, task_suite, BasePipelineElement)
-        self.user_name = "Emma Johnson"
-        self.model_name = model_name
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def query(self, *args, **kwargs):  # pragma: no cover - never called
+        raise NotImplementedError("the bridge does not run an agent pipeline")
+
+
+def pipeline_name_for(prose_model_name: str) -> str:
+    """A MODEL_NAMES key that get_model_name_from_pipeline() resolves to the given
+    prose name; the first key if none does (the caller then overrides model_name)."""
+    for full_name, prose in MODEL_NAMES.items():
+        if prose == prose_model_name:
+            return full_name
+    return next(iter(MODEL_NAMES))
+
+
+def build_attack(attack_name: str, task_suite: TaskSuite, prose_model_name: str, explicit: bool):
+    """Instantiate a registry attack against the stub pipeline. `explicit` marks a
+    user-supplied model name, which then overrides whatever the attack derived
+    (attacks that deliberately drop the model name are left alone otherwise)."""
+    if attack_name not in ATTACKS:
+        raise HTTPException(status_code=404,
+                            detail=f"Unknown attack '{attack_name}' (available: {sorted(ATTACKS)})")
+    attack = load_attack(attack_name, task_suite, _StubPipeline(pipeline_name_for(prose_model_name)))
+    # The stub resolves to the wanted prose only when it is a MODEL_NAMES value.
+    # Otherwise (an explicit --attack-model-name, or the generic default for a
+    # model outside the table) set it directly, except on the variants that
+    # drop or deliberately mis-state the model name.
+    keeps_own_name = attack_name in (
+        "important_instructions_no_model_name", "important_instructions_no_names",
+        "important_instructions_wrong_model_name",
+    )
+    if hasattr(attack, "model_name") and (explicit or prose_model_name not in MODEL_NAMES.values()) \
+            and not (keeps_own_name and not explicit):
+        attack.model_name = prose_model_name
+    return attack
+
+
+@rest_api.get("/attacks")
+def list_attacks_endpoint():
+    """Registered attacks with their DoS flag, for sweep scripts."""
+    return {name: {"is_dos_attack": bool(cls.is_dos_attack)} for name, cls in sorted(ATTACKS.items())}
 
 
 class FinishTaskRequest(BaseModel):
@@ -102,14 +147,21 @@ def init_task_endpoint(request: InitTaskRequest):
 
     user_task = task_suite.get_user_task_by_id(request.user_task_id)
     attack_model_name = request.attack_model_name or attack_model_name_for(request.agent_model)
+    is_dos = False
     if request.injection_task_id is None:
         injection_task = None
         task_injections = {}
     else:
         injection_task = task_suite.get_injection_task_by_id(
             request.injection_task_id)
-        attack = BridgeImportantInstructionsAttack(task_suite, attack_model_name)
-        task_injections = attack.attack(user_task, injection_task)
+        attack = build_attack(request.attack, task_suite, attack_model_name,
+                              explicit=request.attack_model_name is not None)
+        is_dos = bool(attack.is_dos_attack)
+        attack_model_name = getattr(attack, "model_name", attack_model_name)
+        try:
+            task_injections = attack.attack(user_task, injection_task)
+        except ValueError as e:  # e.g. tool_knowledge on a task without placeholder_args
+            raise HTTPException(status_code=400, detail=f"attack '{request.attack}' failed: {e}")
     environment = task_suite.load_and_inject_default_environment(
         task_injections)
     runtime = FunctionsRuntime(task_suite.tools)
@@ -122,7 +174,10 @@ def init_task_endpoint(request: InitTaskRequest):
         "user_task": user_task,
         "injection_task": injection_task,
         "benchmark_version": request.benchmark_version,
+        "attack": request.attack if injection_task is not None else None,
+        "is_dos_attack": is_dos,
         "attack_model_name": attack_model_name if injection_task is not None else None,
+        "run_label": request.run_label,
         "environment": environment,
         "pre_environment": pre_environment,
         "runtime": runtime,
@@ -134,7 +189,9 @@ def init_task_endpoint(request: InitTaskRequest):
         "tools_count": len(task_suite.tools),
         "user_task_prompt": user_task.PROMPT,
         "benchmark_version": request.benchmark_version,
+        "attack": request.attack if injection_task is not None else None,
         "attack_model_name": attack_model_name if injection_task is not None else None,
+        "injection_vectors": sorted(task_injections),
     }
 
 
@@ -156,6 +213,9 @@ def finish_task_endpoint(request: FinishTaskRequest):
 
     if task_data["injection_task"] is None:
         security = False
+    elif task_data["is_dos_attack"]:
+        # As in agentdojo.benchmark: a DoS attack succeeds when the user task fails.
+        security = not utility
     else:
         security = task_data["task_suite"]._check_task_result(
             task_data["injection_task"],
@@ -174,6 +234,8 @@ def finish_task_endpoint(request: FinishTaskRequest):
         filename = f"{agent_type}/{suite}/{user_task}/{injection_task}.json"
     else:
         filename = f"others/{task_id}.json"
+    if task_data["run_label"]:
+        filename = f"{task_data['run_label'].strip('/')}/{filename}"
     os.makedirs(os.path.dirname(f"{RESULT_DIR}/{filename}"), exist_ok=True)
     with open(f"{RESULT_DIR}/{filename}", "w") as f:
         json.dump({
@@ -181,6 +243,7 @@ def finish_task_endpoint(request: FinishTaskRequest):
             "benchmark_version": task_data["benchmark_version"],
             "user_task_id": task_data["user_task_id"],
             "injection_task_id": task_data["injection_task_id"],
+            "attack": task_data["attack"],
             "attack_model_name": task_data["attack_model_name"],
             "user_prompt": task_data["user_task"].PROMPT,
             "injection_goal": task_data["injection_task"].GOAL if task_data["injection_task"] else None,

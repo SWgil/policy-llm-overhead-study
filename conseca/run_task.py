@@ -19,6 +19,11 @@ an interrupted sweep resumes where it stopped and every model keeps its own
 results (the task id carries the model too, so the bridge's mcp_results/ files
 are separate per model as well). Delete the directory to rerun.
 
+Exit codes: 0 all tasks done, 1 some task failed (not cached, rerun later),
+75 (EX_TEMPFAIL) the Gemini daily quota is exhausted: the run that hit it is
+deleted, the sweep stops at once, and run_agentdyn_sweep.py waits for the
+quota to come back before re-invoking this script.
+
 Examples:
     # single AgentDyn task, Conseca on
     python run_task.py --arm on --suite shopping --user-tasks user_task_0 \
@@ -60,6 +65,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from parse_telemetry import summarise  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
+
+EXIT_QUOTA = 75  # EX_TEMPFAIL: stop now, retry later
+
+# gemini-cli output that means the daily quota is gone (or that it silently
+# switched model because of it). Per-minute 429s are retried inside the CLI
+# and only show up as rate_limited_retries in the telemetry.
+QUOTA_RE = re.compile(
+    r"exhausted your daily quota|daily quota|quota exceeded|RESOURCE_EXHAUSTED|per day|"
+    r"Switching to (the )?\S+ model|Switching to flash as Fallback|fallback model",
+    re.IGNORECASE,
+)
+
+
+class QuotaExhausted(RuntimeError):
+    """Raised when gemini-cli reports the daily quota (or fell back to another model)."""
+
 
 # Default task sets per suite: (number of user tasks, injection task ids).
 #
@@ -144,7 +165,7 @@ def write_workspace(ws: Path, *, model: str, conseca: bool, mcp_url: str, cli_pr
 
 
 def run_gemini(gemini: str, ws: Path, prompt: str, task_id: str, timeout: int, dry_run: bool,
-               cli_prompt: bool, system_prompt: Path) -> dict:
+               cli_prompt: bool, system_prompt: Path, model: str) -> dict:
     telemetry = ws / "telemetry.log"
     if telemetry.exists():
         telemetry.unlink()
@@ -181,13 +202,23 @@ def run_gemini(gemini: str, ws: Path, prompt: str, task_id: str, timeout: int, d
     (ws / "stderr.txt").write_text(proc.stderr, encoding="utf-8")
     raw = proc.stdout
     i = raw.find("{")
+    quota_hit = QUOTA_RE.search(proc.stderr)
     if proc.returncode != 0 or i < 0:
+        if quota_hit or QUOTA_RE.search(proc.stdout):
+            raise QuotaExhausted(f"gemini exited {proc.returncode}: {quota_hit.group(0) if quota_hit else 'quota'}"
+                                 f"; stderr tail: {proc.stderr[-300:]}")
         raise RuntimeError(
             f"gemini exited {proc.returncode}; stderr tail: {proc.stderr[-800:]}"
         )
     out = json.loads(raw[i:])
     out["wall_seconds"] = wall
     out["returncode"] = proc.returncode
+    # A run that finished on a different model than requested, with a quota
+    # message in stderr, is the CLI's quota fallback and not this model's data
+    # point. (A silent server-side alias is recorded as served_model instead.)
+    served = sorted(out.get("stats", {}).get("models", {}))
+    if served and any(m != model for m in served) and quota_hit:
+        raise QuotaExhausted(f"gemini switched model to {served} ({quota_hit.group(0)})")
     return out
 
 
@@ -212,7 +243,9 @@ def run_one(args, gemini: str, arm: str, suite: str, user_task: str, injection_t
         # by Google", the wording in AgentDyn's own Gemini logs), unless
         # --attack-model-name overrides it.
         "agent_model": args.model,
+        "attack": args.attack,
         "attack_model_name": args.attack_model_name,
+        "run_label": args.run_label,
     }
     # A bridge that was just (re)started can drop the first connection while
     # the previous server finishes shutting down; retry before giving up.
@@ -232,8 +265,14 @@ def run_one(args, gemini: str, arm: str, suite: str, user_task: str, injection_t
 
     write_workspace(ws, model=args.model, conseca=(arm == "on"), mcp_url=args.mcp_url,
                     cli_prompt=args.cli_prompt, system_prompt=system_prompt)
-    out = run_gemini(gemini, ws, prompt, task_id, args.timeout, args.dry_run, args.cli_prompt,
-                     system_prompt)
+    try:
+        out = run_gemini(gemini, ws, prompt, task_id, args.timeout, args.dry_run, args.cli_prompt,
+                         system_prompt, args.model)
+    except QuotaExhausted:
+        # The interrupted run is not a data point: drop its workspace so the
+        # next invocation re-runs it from scratch.
+        shutil.rmtree(ws, ignore_errors=True)
+        raise
     if args.dry_run:
         return {"task_id": task_id, "dry_run": True}
 
@@ -267,6 +306,7 @@ def run_one(args, gemini: str, arm: str, suite: str, user_task: str, injection_t
         "benchmark_version": benchmark_version,
         "user_task": user_task,
         "injection_task": injection_task,
+        "attack": args.attack if injection_task else None,
         "attack_model_name": init_out.get("attack_model_name"),
         "system_prompt": system_prompt.name,
         "model": args.model,
@@ -318,6 +358,12 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=600, help="seconds per task")
     ap.add_argument("--pause", type=float, default=0.0,
                     help="seconds to sleep between tasks (free-tier keys: try 60)")
+    ap.add_argument("--attack", default="important_instructions",
+                    help="attack from agentdojo's registry (bridge GET /attacks lists them); "
+                         "applies to injection runs only")
+    ap.add_argument("--run-label", default=None,
+                    help="sub-directory of the bridge's --results-dir for this run's bridge files "
+                         "(run_agentdyn_sweep.py passes the attack name so attacks do not collide)")
     ap.add_argument("--attack-model-name", default=None,
                     help="model name written into the injection text; default: derived from --model "
                          "by the bridge like upstream (gemini-* -> 'AI model developed by Google', "
@@ -341,6 +387,11 @@ def main() -> int:
             inj = None if it == "none" else it
             try:
                 results.append(run_one(args, gemini, args.arm, args.suite, ut, inj))
+            except QuotaExhausted as e:
+                print(f"[quota] {ut} {it}: {e}", file=sys.stderr)
+                print("[quota] stopping; the run was deleted and will be redone after the quota resets",
+                      file=sys.stderr)
+                return EXIT_QUOTA
             except Exception as e:  # keep the sweep going; the task is simply not cached
                 print(f"[fail] {ut} {it}: {e}", file=sys.stderr)
                 results.append({"user_task": ut, "injection_task": inj, "error": str(e)})

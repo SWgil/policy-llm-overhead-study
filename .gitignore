@@ -8,3 +8,6 @@ conseca/extracted/
 # Conseca bridge runtime files (conseca/bridge.sh)
 conseca/bridge.log
 conseca/.bridge.pid
+
+# AgentDyn sweeps (conseca/run_agentdyn_sweep.py)
+conseca/runs_agentdyn/
