@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""Aggregate runs/<arm>/<task_id>/result.json into an on-vs-off comparison.
+"""Aggregate runs/<model>/<arm>/<task_id>/result.json into an on-vs-off comparison.
 
-Prints three tables (standard library only, no model calls):
+Runs are grouped by agent model: the tables below are printed once per model,
+and tasks are only paired within the same model. Use --model to look at one.
+For a cross-model overview see results_table.py.
+
+Prints three tables per model (standard library only, no model calls):
 
   headline   per arm: utility on no-injection runs, utility under attack and
              ASR on injection runs, each with its run count (AgentDojo's
@@ -16,6 +20,7 @@ Prints three tables (standard library only, no model calls):
 Usage:
     python compare_arms.py                       # runs/ -> stdout (markdown)
     python compare_arms.py --suite banking
+    python compare_arms.py --model gemini-3.1-flash-lite
     python compare_arms.py --kind attack         # per-arm and paired tables: injection runs only
     python compare_arms.py --csv arms.csv --paired-csv paired.csv
     python compare_arms.py --exclude-429         # drop rate-limited runs from timing means
@@ -35,13 +40,19 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 
-def load_runs(runs_dir: Path, suite: str | None) -> list[dict]:
+def load_runs(runs_dir: Path, suite: str | None, model: str | None = None) -> list[dict]:
+    """Every result.json under runs_dir, whatever the layout (runs/<model>/<arm>/
+    <task_id>/ now, runs/<arm>/<task_id>/ before models were separated)."""
     out = []
-    for p in sorted(runs_dir.glob("*/*/result.json")):
+    for p in sorted(runs_dir.rglob("result.json")):
         r = json.loads(p.read_text(encoding="utf-8"))
+        if "utility" not in r:
+            continue
         if suite and r.get("suite") != suite:
             continue
-        r["_key"] = f"{r['suite']}/{r['user_task']}/{r.get('injection_task') or 'noinjection'}"
+        if model and r.get("model") != model:
+            continue
+        r["_key"] = f"{r.get('model')}/{r['suite']}/{r['user_task']}/{r.get('injection_task') or 'noinjection'}"
         t = r.get("telemetry", {})
         stages = t.get("by_stage", {})
         r["_agent_in"] = stages.get("agent", {}).get("input_tokens", 0)
@@ -229,6 +240,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runs", default=str(HERE / "runs"))
     ap.add_argument("--suite", default=None)
+    ap.add_argument("--model", default=None, help="only runs made with this agent model")
     ap.add_argument("--kind", choices=KINDS, default=None,
                     help="restrict the per-arm and paired tables to benign (no injection) or attack runs")
     ap.add_argument("--exclude-429", action="store_true", help="drop runs with 429 retries from timing means")
@@ -236,38 +248,51 @@ def main() -> int:
     ap.add_argument("--paired-csv", default=None, help="write the paired table as CSV")
     args = ap.parse_args()
 
-    runs = load_runs(Path(args.runs), args.suite)
-    if not runs:
+    all_runs = load_runs(Path(args.runs), args.suite, args.model)
+    if not all_runs:
         print(f"no result.json under {args.runs}")
         return 1
-    head = headline(runs)
     kinds = (args.kind,) if args.kind else KINDS
-    arms = per_arm(runs, args.exclude_429, kinds)
-    pairs = paired(of_kind(runs, args.kind) if args.kind else runs)
-    scope = f"{len(runs)} runs{', ' + args.suite if args.suite else ''}"
+    models = sorted({str(r.get("model")) for r in all_runs})
+    all_arms, all_pairs = [], []
+    for model in models:
+        runs = [r for r in all_runs if str(r.get("model")) == model]
+        head = headline(runs)
+        arms = per_arm(runs, args.exclude_429, kinds)
+        pairs = paired(of_kind(runs, args.kind) if args.kind else runs)
+        scope = f"{len(runs)} runs{', ' + args.suite if args.suite else ''}"
+        for a in arms:
+            a["model"] = model
+        for pr in pairs:
+            pr["model"] = model
+        all_arms += arms
+        all_pairs += pairs
 
-    print(f"## headline ({scope})\n")
-    print(md_table(head, HEADLINE_COLS))
-    print(f"\n## per arm x kind ({scope}{', ' + args.kind + ' only' if args.kind else ''}"
-          f"{', 429 runs excluded from timing' if args.exclude_429 else ''})\n")
-    print(md_table(arms, ARM_COLS))
-    print(f"\n## paired ({len(pairs)} tasks in both arms)\n")
-    print(md_table(pairs, PAIR_COLS) if pairs else "(none yet: run both arms on the same tasks)")
-    on = next((a for a in arms if a["arm"] == "on" and a["kind"] == kinds[-1]), None)
-    off = next((a for a in arms if a["arm"] == "off" and a["kind"] == kinds[-1]), None)
-    notes = []
-    if off and off["conseca_ms"]:
-        notes.append("off arm has Conseca time > 0: the settings.json toggle was not applied (see README trap 1)")
-    if on and on["fail_open"]:
-        notes.append(f"on arm has {on['fail_open']} fail-open verdicts: those runs measure absence of defence, not defence")
-    if any(a["runs_with_429"] for a in arms):
-        notes.append("some runs hit 429 retries: re-run with --exclude-429 before quoting latency")
-    if notes:
-        print("\n## notes\n" + "\n".join(f"- {n}" for n in notes))
+        if len(models) > 1:
+            print(f"# model: {model}\n")
+        print(f"## headline ({model}, {scope})\n")
+        print(md_table(head, HEADLINE_COLS))
+        print(f"\n## per arm x kind ({scope}{', ' + args.kind + ' only' if args.kind else ''}"
+              f"{', 429 runs excluded from timing' if args.exclude_429 else ''})\n")
+        print(md_table(arms, ARM_COLS))
+        print(f"\n## paired ({len(pairs)} tasks in both arms)\n")
+        print(md_table(pairs, PAIR_COLS) if pairs else "(none yet: run both arms on the same tasks)")
+        on = next((a for a in arms if a["arm"] == "on" and a["kind"] == kinds[-1]), None)
+        off = next((a for a in arms if a["arm"] == "off" and a["kind"] == kinds[-1]), None)
+        notes = []
+        if off and off["conseca_ms"]:
+            notes.append("off arm has Conseca time > 0: the settings.json toggle was not applied (see README trap 1)")
+        if on and on["fail_open"]:
+            notes.append(f"on arm has {on['fail_open']} fail-open verdicts: those runs measure absence of defence, not defence")
+        if any(a["runs_with_429"] for a in arms):
+            notes.append("some runs hit 429 retries: re-run with --exclude-429 before quoting latency")
+        if notes:
+            print("\n## notes\n" + "\n".join(f"- {n}" for n in notes))
+        print()
     if args.csv:
-        write_csv(Path(args.csv), arms)
+        write_csv(Path(args.csv), all_arms)
     if args.paired_csv:
-        write_csv(Path(args.paired_csv), pairs)
+        write_csv(Path(args.paired_csv), all_pairs)
     return 0
 
 

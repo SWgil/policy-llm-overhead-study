@@ -12,6 +12,8 @@ export GEMINI_API_KEY=...
 ./setup.sh                  # gemini-cli 0.59.0 + Python venv + AgentDojo 브리지
 ./run_pilot.sh --smoke      # 태스크 1개 × Conseca off/on, 비교표까지 출력
 SUITE=shopping ./run_pilot.sh --smoke   # AgentDyn 스위트
+MODEL=gemini-2.5-flash SUITE=shopping ./run_pilot.sh --smoke   # 다른 모델. 결과는 runs/<model>/에 따로 남는다
+.venv/bin/python results_table.py       # 모든 모델·스위트·arm 결과를 한 표로
 ```
 
 전체 절차·분석 방법·함정은 [conseca/README.md](conseca/README.md).

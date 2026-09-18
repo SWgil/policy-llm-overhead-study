@@ -14,8 +14,10 @@ One task = one gemini-cli process. The flow, per task:
   4. POST /finish_task with the final response        -> utility, security
   5. parse the telemetry file                           -> agent vs Conseca cost
 
-Results are cached per task in <out>/<arm>/<task_id>/result.json, so an
-interrupted sweep resumes where it stopped. Delete the directory to rerun.
+Results are cached per task in <out>/<model>/<arm>/<task_id>/result.json, so
+an interrupted sweep resumes where it stopped and every model keeps its own
+results (the task id carries the model too, so the bridge's mcp_results/ files
+are separate per model as well). Delete the directory to rerun.
 
 Examples:
     # single AgentDyn task, Conseca on
@@ -42,8 +44,10 @@ See README.md for prerequisites and the traps that fail silently.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -100,10 +104,27 @@ def find_gemini(explicit: str | None) -> str:
     sys.exit("gemini-cli not on PATH; install with `npm i -g @google/gemini-cli` or pass --gemini")
 
 
-def task_id_for(arm: str, suite: str, user_task: str, injection_task: str | None) -> str:
+def model_slug(model: str) -> str:
+    """`gemini-3.1-flash-lite` -> `gemini_3_1_flash_lite`: only [A-Za-z0-9_], so
+    the id stays inside the bridge's word-character-only task-id regex."""
+    return re.sub(r"[^A-Za-z0-9]+", "_", model).strip("_")
+
+
+def task_id_for(model: str, arm: str, suite: str, user_task: str, injection_task: str | None) -> str:
     # Must match the bridge's result-file regex:
     #   ^(\w+)_([\w]+)_(user_task_\d+)_(injection_task_\d+|noinjection)$
-    return f"gemini{arm}_{suite}_{user_task}_{injection_task or 'noinjection'}"
+    # The greedy first group swallows "<model slug>_<arm>", so the bridge files
+    # this run under mcp_results/<model slug>_<arm>/<suite>/<user_task>/.
+    return f"{model_slug(model)}_{arm}_{suite}_{user_task}_{injection_task or 'noinjection'}"
+
+
+def gemini_version(gemini: str) -> str | None:
+    try:
+        out = subprocess.run([gemini, "--version"], capture_output=True, text=True, timeout=30)
+        lines = [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
+        return lines[-1] if lines else None
+    except Exception:
+        return None
 
 
 def write_workspace(ws: Path, *, model: str, conseca: bool, mcp_url: str, cli_prompt: bool,
@@ -171,8 +192,8 @@ def run_gemini(gemini: str, ws: Path, prompt: str, task_id: str, timeout: int, d
 
 
 def run_one(args, gemini: str, arm: str, suite: str, user_task: str, injection_task: str | None) -> dict:
-    task_id = task_id_for(arm, suite, user_task, injection_task)
-    ws = Path(args.out).resolve() / arm / task_id  # absolute: gemini runs with cwd=ws
+    task_id = task_id_for(args.model, arm, suite, user_task, injection_task)
+    ws = Path(args.out).resolve() / args.model / arm / task_id  # absolute: gemini runs with cwd=ws
     result_path = ws / "result.json"
     if result_path.exists() and not args.force:
         print(f"[skip] {task_id} (cached)")
@@ -207,6 +228,7 @@ def run_one(args, gemini: str, arm: str, suite: str, user_task: str, injection_t
     init_out = init.json()
     prompt = init_out["user_task_prompt"]
     print(f"[run ] {task_id}: {prompt[:80]}")
+    started_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
 
     write_workspace(ws, model=args.model, conseca=(arm == "on"), mcp_url=args.mcp_url,
                     cli_prompt=args.cli_prompt, system_prompt=system_prompt)
@@ -224,6 +246,10 @@ def run_one(args, gemini: str, arm: str, suite: str, user_task: str, injection_t
     score = fin.json()
 
     telemetry = summarise(ws / "telemetry.log") if (ws / "telemetry.log").exists() else None
+    # The model the API actually served the agent's calls with (the server may
+    # alias, e.g. gemini-2.5-flash -> gemini-3.5-flash; README trap 4).
+    served = sorted({c["model"] for c in (telemetry or {}).get("calls", [])
+                     if c["stage"] == "agent" and c.get("model")})
     roles = {}
     for model, mstats in out.get("stats", {}).get("models", {}).items():
         for role, r in mstats.get("roles", {}).items():
@@ -244,6 +270,10 @@ def run_one(args, gemini: str, arm: str, suite: str, user_task: str, injection_t
         "attack_model_name": init_out.get("attack_model_name"),
         "system_prompt": system_prompt.name,
         "model": args.model,
+        "served_model": served[0] if len(served) == 1 else (served or None),
+        "gemini_cli_version": args.gemini_cli_version,
+        "started_at": started_at,
+        "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "utility": score.get("utility"),
         "security": score.get("security"),
         "wall_seconds": out.get("wall_seconds"),
@@ -280,7 +310,8 @@ def main() -> int:
                     help="'none' = no injection; default: none + all in suite")
     ap.add_argument("--model", default="gemini-3.1-flash-lite",
                     help="agent model (Conseca itself is pinned to the CLI's flash default)")
-    ap.add_argument("--out", default=str(HERE / "runs"))
+    ap.add_argument("--out", default=str(HERE / "runs"),
+                    help="results root; runs land in <out>/<model>/<arm>/<task_id>/")
     ap.add_argument("--rest-url", default="http://127.0.0.1:9000")
     ap.add_argument("--mcp-url", default="http://127.0.0.1:9001/mcp/")
     ap.add_argument("--gemini", default=None, help="path to the gemini binary")
@@ -299,6 +330,7 @@ def main() -> int:
     args = ap.parse_args()
 
     gemini = find_gemini(args.gemini)
+    args.gemini_cli_version = gemini_version(gemini)
     n_users, injections = SUITES[args.suite]
     user_tasks = args.user_tasks or [f"user_task_{i}" for i in range(n_users)]
     injection_tasks = args.injection_tasks or ["none", *injections]

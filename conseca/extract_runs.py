@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Split every finished run under runs/ into six small JSON files.
 
-For each <runs>/<arm>/<task_id>/ that has a result.json, writes
-<out>/<arm>/<task_id>/:
+For each <runs>/<model>/<arm>/<task_id>/ that has a result.json, writes
+<out>/<model>/<arm>/<task_id>/:
 
   user_prompt.json     the AgentDojo user task prompt
   scores.json          utility / security plus task identity
@@ -34,6 +34,7 @@ Usage:
     python extract_runs.py                       # runs/ + mcp_results/ -> extracted/
     python extract_runs.py --runs runs --out extracted --mcp-results mcp_results
     python extract_runs.py --arm on --suite banking
+    python extract_runs.py --model gemini-3.1-flash-lite
 """
 
 from __future__ import annotations
@@ -235,6 +236,7 @@ def extract_one(run_dir: Path, mcp_results: Path, out_dir: Path) -> dict:
 
     return {
         "task_id": task_id,
+        "model": result.get("model"),
         "arm": result.get("arm"),
         "suite": result.get("suite"),
         "user_task": result.get("user_task"),
@@ -265,6 +267,7 @@ def main() -> int:
     ap.add_argument("--out", default=str(HERE / "extracted"))
     ap.add_argument("--arm", choices=["on", "off"], default=None, help="only this arm")
     ap.add_argument("--suite", default=None, help="only this suite")
+    ap.add_argument("--model", default=None, help="only runs made with this agent model")
     args = ap.parse_args()
 
     runs = Path(args.runs)
@@ -272,22 +275,32 @@ def main() -> int:
     out = Path(args.out)
 
     index = []
-    for result_path in sorted(runs.glob("*/*/result.json")):
+    for result_path in sorted(runs.rglob("result.json")):
         run_dir = result_path.parent
-        arm = run_dir.parent.name
+        try:
+            head = load_json(result_path)
+        except Exception as e:
+            print(f"[fail] {run_dir}: unreadable result.json: {e}", file=sys.stderr)
+            continue
+        if "utility" not in head:
+            continue
+        arm = head.get("arm") or run_dir.parent.name
+        model = str(head.get("model") or "unknown-model")
         if args.arm and arm != args.arm:
             continue
-        if args.suite and f"_{args.suite}_" not in run_dir.name:
+        if args.suite and head.get("suite") != args.suite:
+            continue
+        if args.model and head.get("model") != args.model:
             continue
         try:
-            row = extract_one(run_dir, mcp_results, out / arm / run_dir.name)
+            row = extract_one(run_dir, mcp_results, out / model / arm / run_dir.name)
         except Exception as e:  # keep going; report at the end
-            row = {"task_id": run_dir.name, "arm": arm, "error": str(e)}
-            print(f"[fail] {arm}/{run_dir.name}: {e}", file=sys.stderr)
+            row = {"task_id": run_dir.name, "model": model, "arm": arm, "error": str(e)}
+            print(f"[fail] {model}/{arm}/{run_dir.name}: {e}", file=sys.stderr)
         else:
             flag = "" if row["bridge_file_found"] else "  (no bridge file: prompt/tools from telemetry only)"
             print(
-                f"[ok  ] {arm}/{row['task_id']}: utility={row['utility']} security={row['security']} "
+                f"[ok  ] {model}/{arm}/{row['task_id']}: utility={row['utility']} security={row['security']} "
                 f"policies={row['policy_generations']} verdicts={row['verdicts']} "
                 f"injected_calls={row['injected_tool_calls']}{flag}"
             )

@@ -10,7 +10,9 @@
 #      travel/workspace) ARMS ("off on") PAUSE (0; use 60 on a free-tier key)
 #      MODEL (gemini-3.1-flash-lite). Extra args go to run_task.py (e.g. --force).
 # Starts the bridge if it is not running and stops it again at the end.
-# Finished tasks are cached in runs/; re-running resumes where it stopped.
+# Finished tasks are cached in runs/<model>/<arm>/; re-running resumes where it
+# stopped, and a different MODEL gets its own results next to the others.
+# Cross-model overview afterwards: .venv/bin/python results_table.py
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -49,7 +51,8 @@ for arm in $ARMS; do
 done
 
 if ! printf '%s\n' "${extra[@]}" | grep -q -- '--dry-run'; then
-  echo; .venv/bin/python compare_arms.py --suite "$SUITE"
-  echo; echo "per-run detail: .venv/bin/python extract_runs.py --suite $SUITE   -> extracted/"
+  echo; .venv/bin/python compare_arms.py --suite "$SUITE" --model "$MODEL"
+  echo; echo "all models/suites in one table: .venv/bin/python results_table.py"
+  echo "per-run detail: .venv/bin/python extract_runs.py --suite $SUITE --model $MODEL   -> extracted/"
 fi
 exit $rc

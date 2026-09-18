@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify from a run's telemetry what the model actually received.
 
-Checks, per run directory (runs/<arm>/<task_id>/):
+Checks, per run directory (runs/<model>/<arm>/<task_id>/):
 
   system prompt      every gen_ai.system_instructions equals the benchmark's
                      message: agentdyn_system.md for shopping/github/dailylife
@@ -19,8 +19,8 @@ Checks, per run directory (runs/<arm>/<task_id>/):
                      calls carry no tools and are ignored.
 
 Standard library only. Usage:
-    python check_run.py runs/off/geminioff_banking_user_task_0_injection_task_0
-    python check_run.py runs/*/*            # every run
+    python check_run.py runs/gemini-3.1-flash-lite/off/gemini_3_1_flash_lite_off_shopping_user_task_0_injection_task_0
+    python check_run.py runs/*/*/*          # every run (runs/<model>/<arm>/<task_id>)
 """
 
 from __future__ import annotations

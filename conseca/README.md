@@ -35,9 +35,11 @@ PAUSE=60 ./run_pilot.sh --pilot   # 4 유저 × 4 주입 × 2 arm = 32런. 무�
 ./run_pilot.sh --full             # 스위트 전체(banking 160런 × 2 arm)
 SUITE=shopping ./run_pilot.sh --full    # AgentDyn shopping 전체(20 유저 × (무주입 + 9 주입) = 200런 × 2 arm)
 SUITE=slack ./run_pilot.sh --pilot
+MODEL=gemini-2.5-flash SUITE=shopping ./run_pilot.sh --pilot   # 다른 에이전트 모델. 결과는 runs/<model>/ 아래 따로 쌓인다
+.venv/bin/python results_table.py                              # 지금까지의 모든 런을 모델 × 스위트 × arm 표로
 ```
 
-끝난 태스크는 `runs/`에 캐시되므로 중단해도 같은 명령으로 이어 돈다. 필요한 것: Node.js ≥ 20, Python 3.12(`uv`가 받아 준다), Gemini 인증. Windows는 Git Bash에서 같은 스크립트를 쓰되 venv 경로가 `.venv/Scripts/python.exe`다.
+끝난 태스크는 `runs/<model>/<arm>/`에 캐시되므로 중단해도 같은 명령으로 이어 돌고, 모델을 바꿔 돌린 결과는 서로 덮어쓰지 않는다. 필요한 것: Node.js ≥ 20, Python 3.12(`uv`가 받아 준다), Gemini 인증. Windows는 Git Bash에서 같은 스크립트를 쓰되 venv 경로가 `.venv/Scripts/python.exe`다.
 
 ---
 
@@ -49,7 +51,8 @@ SUITE=slack ./run_pilot.sh --pilot
 | `run_pilot.sh` | `--smoke / --pilot / --full` 범위로 양쪽 arm을 돌리고 `compare_arms.py`까지 실행. 브리지를 알아서 띄우고 내린다 |
 | `bridge.sh` | AgentDyn/AgentDojo MCP 브리지 `start / stop / status / log` |
 | `run_task.py` | 태스크 단위 실행기. 초기화 → 워크스페이스 생성 → gemini 실행 → 채점 → 텔레메트리 요약. 세밀한 제어가 필요할 때 직접 호출 |
-| `compare_arms.py` | **분석.** `runs/`를 읽어 arm별 집계표와 태스크별 on/off 짝 비교표를 출력. CSV 저장 가능 |
+| `results_table.py` | **분석.** `runs/` 전체를 모델 × 스위트 × arm 한 표로. 모델별 on/off 오버헤드 표와 런 목록(`--tasks`)도 출력. CSV 저장 가능 |
+| `compare_arms.py` | **분석.** 한 모델의 `runs/`를 읽어 arm별 집계표와 태스크별 on/off 짝 비교표를 출력(모델이 여럿이면 모델마다 반복). CSV 저장 가능 |
 | `extract_runs.py` | **분석.** 런마다 프롬프트·점수·정책·주입된 툴 출력·판정·응답을 6개 JSON으로 분리 |
 | `parse_telemetry.py` | 텔레메트리 파일 1개 → 단계별 비용·판정 JSON. 위 둘이 내부에서 쓴다 |
 | `check_run.py` | **검증.** 런의 텔레메트리에서 모델이 실제로 받은 시스템 프롬프트·툴 선언·툴 출력을 꺼내, 프롬프트가 스위트에 맞는 `agentdyn_system.md` / `agentdojo_system.md`와 같은지, 툴이 `mcp_agentdojo_*`뿐인지, `<untrusted_context>` 태그 유무를 확인 |
@@ -58,7 +61,7 @@ SUITE=slack ./run_pilot.sh --pilot
 | `agentdyn_system.md` | AgentDyn 기본 시스템 메시지 원문(AgentDojo 것 + "Complete all tasks automatically without requesting user confirmation." 한 줄). shopping/github/dailylife 런에 사용 |
 | `agentdojo-mcp/` | AgentDyn(AgentDojo 0.1.35 포크, 7개 스위트)을 MCP로 노출하는 브리지(동봉, 별도 클론 불필요). 스위트 버전은 `/init_task`의 `benchmark_version`으로 고른다 |
 
-실행 중 생기는 것(모두 git 제외): `runs/<arm>/<task_id>/`(result.json, telemetry.log, stdout/stderr, 사용된 settings.json), `mcp_results/`(브리지가 기록한 툴 호출·채점), `extracted/`, `bridge.log`.
+실행 중 생기는 것(모두 git 제외): `runs/<model>/<arm>/<task_id>/`(result.json, telemetry.log, stdout/stderr, 사용된 settings.json), `mcp_results/<model>_<arm>/`(브리지가 기록한 툴 호출·채점), `extracted/<model>/<arm>/`, `bridge.log`. task_id에도 모델 슬러그가 들어가므로(`gemini_3_1_flash_lite_off_shopping_user_task_0_injection_task_0`) 모델을 바꿔 돌린 결과는 어디서도 섞이지 않는다.
 
 ---
 
@@ -67,7 +70,7 @@ SUITE=slack ./run_pilot.sh --pilot
 ```
 run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환경 로드, 주입 삽입
      │                                  │
-     │  cwd=runs/<arm>/<task_id>/       │
+     │  cwd=runs/<model>/<arm>/<task_id>/ │
      ├──▶ gemini -p "<user prompt>" ────┤ MCP (:9001, 헤더 task_id) ── 툴 호출은 AgentDojo 환경에서 실행
      │        │ Conseca on: 정책 생성 1회 + 툴 호출당 판정 1회 (Flash)
      │        └─ telemetry.log, stdout(json)
@@ -93,7 +96,7 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 | `--pilot` | user_task_0~3 × {none, injection_task_0~2} | ~500 |
 | `--full` | 스위트 전체(무주입 포함) | banking ≈ 5,000. AgentDyn은 스위트당 200~220런 × 2 arm이고 태스크가 길어 요청 수는 더 많다 |
 
-환경변수: `SUITE`(AgentDyn: shopping/github/dailylife, AgentDojo: banking/slack/travel/workspace), `ARMS`(`"off on"`), `PAUSE`(태스크 사이 대기 초, 무료 티어면 60), `MODEL`(에이전트 모델, 기본 `gemini-3.1-flash-lite`). 나머지 인자는 `run_task.py`로 넘어간다(`--force`로 캐시 무시, `--dry-run`으로 명령만 출력).
+환경변수: `SUITE`(AgentDyn: shopping/github/dailylife, AgentDojo: banking/slack/travel/workspace), `ARMS`(`"off on"`), `PAUSE`(태스크 사이 대기 초, 무료 티어면 60), `MODEL`(에이전트 모델, 기본 `gemini-3.1-flash-lite`; 값마다 `runs/<model>/`가 따로 생긴다). 나머지 인자는 `run_task.py`로 넘어간다(`--force`로 캐시 무시, `--dry-run`으로 명령만 출력).
 
 ### run_task.py 직접 호출
 
@@ -116,16 +119,37 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 | `--cli-prompt` | off | 정렬 이전 방식(CLI 자체 시스템 프롬프트 유지, 벤치마크 시스템 메시지를 `GEMINI.md`로) |
 | `--force`, `--dry-run` | | 캐시 무시 / 명령만 출력 |
 
-한 런의 로그는 `runs/<arm>/<task_id>/`에 있다. `stderr.txt`에 `[Conseca]`나 429가 보이면 [§5](#5-조용히-실패하는-함정)를 볼 것.
+한 런의 로그는 `runs/<model>/<arm>/<task_id>/`에 있다. `stderr.txt`에 `[Conseca]`나 429가 보이면 [§5](#5-조용히-실패하는-함정)를 볼 것.
 
 ---
 
 ## 4. 분석
 
+### 4-0. 전체 결과표 — `results_table.py`
+
+모델을 바꿔 가며 쌓인 `runs/` 전체를 한 번에 본다.
+
+```bash
+.venv/bin/python results_table.py                       # 모델 × 스위트 × arm
+.venv/bin/python results_table.py --by model,arm        # 스위트 합산
+.venv/bin/python results_table.py --suite shopping --model gemini-3.1-flash-lite
+.venv/bin/python results_table.py --tasks               # 런 하나하나까지
+.venv/bin/python results_table.py --csv summary.csv --overhead-csv overhead.csv --tasks-csv runs.csv
+```
+
+| 표 | 내용 |
+|---|---|
+| **summary** | `--by`로 묶은 행마다 런 수, 무주입 n·utility, 주입 n·utility under attack·ASR, 평균 벽시계·`agent ms`·`conseca ms`, `conseca/agent`, 호출 수, 429 런 수, fail-open, **실제 서빙된 모델**(§5-④의 별칭 확인용), CLI 버전 |
+| **overhead** | 모델(·스위트)별로 **양쪽 arm에 모두 있는 태스크만** 골라 off→on을 나란히: utility·ASR 변화, 벽시계 on/off 배율, 에이전트·Conseca 시간, 툴 호출 수 |
+| **runs** (`--tasks`) | 런 하나가 한 행. 모델·arm·태스크·점수·시간·판정·시작 시각 |
+
+`compare_arms.py`와 같은 자체 점검(`## notes`)을 하고, 요청한 모델과 서빙된 모델이 다르면 그것도 알린다. 옛 레이아웃(`runs/<arm>/<task_id>/`)의 런도 `result.json`의 `model` 필드로 읽는다.
+
 ### 4-1. arm 비교 — `compare_arms.py`
 
 ```bash
-.venv/bin/python compare_arms.py                      # runs/ 전체
+.venv/bin/python compare_arms.py                      # runs/ 전체(모델이 여럿이면 모델마다 한 묶음)
+.venv/bin/python compare_arms.py --model gemini-3.1-flash-lite --suite shopping
 .venv/bin/python compare_arms.py --suite banking --exclude-429
 .venv/bin/python compare_arms.py --kind attack        # 주입 런만 (benign = 무주입 런만)
 .venv/bin/python compare_arms.py --csv arms.csv --paired-csv paired.csv
@@ -154,8 +178,8 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 수치가 아니라 **무슨 일이 있었는지**를 보려면:
 
 ```bash
-.venv/bin/python extract_runs.py                     # → extracted/<arm>/<task_id>/
-.venv/bin/python extract_runs.py --arm on --suite banking
+.venv/bin/python extract_runs.py                     # → extracted/<model>/<arm>/<task_id>/
+.venv/bin/python extract_runs.py --arm on --suite banking --model gemini-3.1-flash-lite
 ```
 
 | 파일 | 내용 |
@@ -169,7 +193,9 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 
 `extracted/index.json`에 런별 한 줄 요약이 남는다. 브리지 결과 파일은 태스크를 다시 돌리면 덮어써지므로 `runs/`와 같은 시점의 것을 써야 한다.
 
-### 4-3. 텔레메트리 필드 (`result.json`의 `telemetry`)
+### 4-3. `result.json`의 실행 정보와 텔레메트리 필드
+
+런마다 `model`(요청한 에이전트 모델), `served_model`(텔레메트리에 찍힌 실제 모델, §5-④), `gemini_cli_version`, `started_at` / `finished_at`(UTC)이 남는다. `telemetry` 아래:
 
 | 필드 | 의미 |
 |---|---|
