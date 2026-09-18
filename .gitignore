@@ -1,6 +1,3 @@
-# Optional local checkout of a patched gemini-cli (see conseca/README.md §7)
-gemini-cli/
-
 # Per-task workspaces and telemetry written by conseca/run_task.py
 conseca/runs/
 __pycache__/
@@ -11,4 +8,3 @@ conseca/extracted/
 # Conseca bridge runtime files (conseca/bridge.sh)
 conseca/bridge.log
 conseca/.bridge.pid
-conseca/runs_patched/

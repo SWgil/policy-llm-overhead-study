@@ -6,8 +6,8 @@ Checks, per run directory (runs/<arm>/<task_id>/):
   system prompt      every gen_ai.system_instructions equals the benchmark's
                      message: agentdyn_system.md for shopping/github/dailylife
                      runs, agentdojo_system.md for banking/slack/travel/workspace
-  untrusted_context  how many times the tag appears in the log (0 after
-                     patch_cli.py --apply, 2 per tool call on the stock CLI)
+  untrusted_context  how many times the tag appears in the log (2 per tool
+                     call on the stock CLI)
   tool outputs       the functionResponse texts as sent to the model, so the
                      wrapping (or its absence) is visible directly
   session_context    whether the CLI prepended its <session_context> block
