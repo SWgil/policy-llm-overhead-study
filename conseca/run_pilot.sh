@@ -6,7 +6,7 @@
 #   ./run_pilot.sh --full             # whole suite x 2 arms
 #   ./run_pilot.sh --smoke --dry-run  # print the gemini commands only
 #
-# Env: SUITE (banking; AgentDyn: shopping/github/dailylife, AgentDojo: banking/slack/
+# Env: SUITE (shopping; AgentDyn: shopping/github/dailylife, AgentDojo: banking/slack/
 #      travel/workspace) ARMS ("off on") PAUSE (0; use 60 on a free-tier key)
 #      MODEL (gemini-3.1-flash-lite). Extra args go to run_task.py (e.g. --force).
 # Starts the bridge if it is not running and stops it again at the end.
@@ -16,7 +16,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-SUITE="${SUITE:-banking}"
+SUITE="${SUITE:-shopping}"
 ARMS="${ARMS:-off on}"
 PAUSE="${PAUSE:-0}"
 MODEL="${MODEL:-gemini-3.1-flash-lite}"

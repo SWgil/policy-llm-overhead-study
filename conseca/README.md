@@ -16,8 +16,8 @@ cd policy-llm-overhead-study/conseca
 
 export GEMINI_API_KEY=...        # 또는 `gemini`를 한 번 대화형으로 열어 구글 계정 로그인
 ./setup.sh                       # gemini-cli 0.59.0 + .venv + AgentDojo 브리지, 인증 점검
-./run_pilot.sh --smoke           # banking 태스크 1개 × off/on. 파이프라인이 살아 있는지 확인 (~30 요청)
-SUITE=shopping ./run_pilot.sh --smoke   # AgentDyn 스위트로 같은 확인
+./run_pilot.sh --smoke           # shopping 태스크 1개 × off/on. 파이프라인이 살아 있는지 확인
+SUITE=banking ./run_pilot.sh --smoke    # AgentDojo 스위트로 같은 확인 (~30 요청)
 ```
 
 `--smoke`가 끝나면 아래처럼 arm별 표와 태스크별 짝 비교표가 나온다. **off 행의 `conseca ms`가 0이고 on 행의 `fail-open`이 0이면 정상이다.**
@@ -32,10 +32,10 @@ SUITE=shopping ./run_pilot.sh --smoke   # AgentDyn 스위트로 같은 확인
 
 ```bash
 PAUSE=60 ./run_pilot.sh --pilot   # 4 유저 × 4 주입 × 2 arm = 32런. 무료 티어 키면 PAUSE=60
-./run_pilot.sh --full             # 스위트 전체(banking 160런 × 2 arm)
-SUITE=shopping ./run_pilot.sh --full    # AgentDyn shopping 전체(20 유저 × (무주입 + 9 주입) = 200런 × 2 arm)
-SUITE=slack ./run_pilot.sh --pilot
-MODEL=gemini-2.5-flash SUITE=shopping ./run_pilot.sh --pilot   # 다른 에이전트 모델. 결과는 runs/<model>/ 아래 따로 쌓인다
+./run_pilot.sh --full             # shopping 전체(20 유저 × (무주입 + 9 주입) = 200런 × 2 arm)
+SUITE=github ./run_pilot.sh --full      # 다른 AgentDyn 스위트
+SUITE=banking ./run_pilot.sh --full     # AgentDojo 스위트(banking 160런 × 2 arm)
+MODEL=gemini-2.5-flash ./run_pilot.sh --pilot   # 다른 에이전트 모델. 결과는 runs/<model>/ 아래 따로 쌓인다
 ./smoke_models.sh gemini-3.1-flash-lite gemini-2.5-flash gemini-3.5-flash   # 모델마다 smoke 1건 × off/on, 끝에 모델 비교표
 .venv/bin/python results_table.py                              # 지금까지의 모든 런을 모델 × 스위트 × arm 표로
 ```
@@ -96,9 +96,9 @@ run_task.py ──REST /init_task──▶ agentdojo-mcp (:9000)   AgentDojo 환
 |---|---|---|
 | `--smoke` | user_task_0 × 스위트의 첫 injection 태스크(slack은 injection_task_1) | ~30 |
 | `--pilot` | user_task_0~3 × {none, injection_task_0~2} | ~500 |
-| `--full` | 스위트 전체(무주입 포함) | banking ≈ 5,000. AgentDyn은 스위트당 200~220런 × 2 arm이고 태스크가 길어 요청 수는 더 많다 |
+| `--full` | 스위트 전체(무주입 포함) | AgentDyn은 스위트당 200~220런 × 2 arm이고 태스크가 길어 요청 수가 많다. banking ≈ 5,000 |
 
-환경변수: `SUITE`(AgentDyn: shopping/github/dailylife, AgentDojo: banking/slack/travel/workspace), `ARMS`(`"off on"`), `PAUSE`(태스크 사이 대기 초, 무료 티어면 60), `MODEL`(에이전트 모델, 기본 `gemini-3.1-flash-lite`; 값마다 `runs/<model>/`가 따로 생긴다). 나머지 인자는 `run_task.py`로 넘어간다(`--force`로 캐시 무시, `--dry-run`으로 명령만 출력).
+환경변수: `SUITE`(기본 `shopping`; AgentDyn: shopping/github/dailylife, AgentDojo: banking/slack/travel/workspace), `ARMS`(`"off on"`), `PAUSE`(태스크 사이 대기 초, 무료 티어면 60), `MODEL`(에이전트 모델, 기본 `gemini-3.1-flash-lite`; 값마다 `runs/<model>/`가 따로 생긴다). 나머지 인자는 `run_task.py`로 넘어간다(`--force`로 캐시 무시, `--dry-run`으로 명령만 출력).
 
 ### run_task.py 직접 호출
 
