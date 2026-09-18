@@ -36,6 +36,7 @@ PAUSE=60 ./run_pilot.sh --pilot   # 4 유저 × 4 주입 × 2 arm = 32런. 무�
 SUITE=shopping ./run_pilot.sh --full    # AgentDyn shopping 전체(20 유저 × (무주입 + 9 주입) = 200런 × 2 arm)
 SUITE=slack ./run_pilot.sh --pilot
 MODEL=gemini-2.5-flash SUITE=shopping ./run_pilot.sh --pilot   # 다른 에이전트 모델. 결과는 runs/<model>/ 아래 따로 쌓인다
+./smoke_models.sh gemini-3.1-flash-lite gemini-2.5-flash gemini-3.5-flash   # 모델마다 smoke 1건 × off/on, 끝에 모델 비교표
 .venv/bin/python results_table.py                              # 지금까지의 모든 런을 모델 × 스위트 × arm 표로
 ```
 
@@ -49,6 +50,7 @@ MODEL=gemini-2.5-flash SUITE=shopping ./run_pilot.sh --pilot   # 다른 에이�
 |---|---|
 | `setup.sh` | 환경 세팅. gemini-cli 고정 버전 설치, `.venv` 생성, 브리지 설치, 인증·전역 메모리 점검. 재실행 안전 |
 | `run_pilot.sh` | `--smoke / --pilot / --full` 범위로 양쪽 arm을 돌리고 `compare_arms.py`까지 실행. 브리지를 알아서 띄우고 내린다 |
+| `smoke_models.sh` | 모델 목록을 받아 모델마다 `run_pilot.sh --smoke`(태스크 1개 × off/on)를 돌리고 끝에 `results_table.py`로 모델 비교표를 찍는다. 기본 `SUITE=shopping`. 한 모델이 실패해도(404·쿼터) 나머지는 계속 돌고 끝에 실패 모델을 알려준다 |
 | `bridge.sh` | AgentDyn/AgentDojo MCP 브리지 `start / stop / status / log` |
 | `run_task.py` | 태스크 단위 실행기. 초기화 → 워크스페이스 생성 → gemini 실행 → 채점 → 텔레메트리 요약. 세밀한 제어가 필요할 때 직접 호출 |
 | `results_table.py` | **분석.** `runs/` 전체를 모델 × 스위트 × arm 한 표로. 모델별 on/off 오버헤드 표와 런 목록(`--tasks`)도 출력. CSV 저장 가능 |
